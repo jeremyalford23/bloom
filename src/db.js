@@ -134,10 +134,41 @@ CREATE TABLE IF NOT EXISTS audit_events (
   detail_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS budgets (
+  id TEXT PRIMARY KEY,
+  category_id TEXT NOT NULL REFERENCES categories(id),
+  amount_minor INTEGER NOT NULL,
+  cadence TEXT NOT NULL DEFAULT 'monthly',
+  effective_from TEXT NOT NULL,
+  effective_to TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS budget_settings (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recurring_items (
+  id TEXT PRIMARY KEY,
+  merchant_id TEXT REFERENCES merchants(id),
+  merchant_name TEXT NOT NULL,
+  category_id TEXT REFERENCES categories(id),
+  amount_minor INTEGER NOT NULL,
+  cadence TEXT NOT NULL,
+  next_due_date TEXT,
+  state TEXT NOT NULL DEFAULT 'confirmed',
+  source TEXT NOT NULL DEFAULT 'detected',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_transactions_posted ON transactions(posted_date DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
 CREATE INDEX IF NOT EXISTS idx_raw_import_run ON raw_import_records(import_run_id);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(entity_type, entity_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_budgets_category_date ON budgets(category_id, effective_from);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_merchant_cadence ON recurring_items(merchant_name, cadence);
 `;
 
 export function openDatabase(path = process.env.BLOOM_DB_PATH ?? "data/bloom.db") {
@@ -170,6 +201,29 @@ function migrateSchema(db) {
   if (!transactionColumns.has("classification_rule_id")) {
     db.exec("ALTER TABLE transactions ADD COLUMN classification_rule_id TEXT");
   }
+  const categoryColumns = new Set(
+    db.prepare("PRAGMA table_info(categories)").all().map((column) => column.name)
+  );
+  if (!categoryColumns.has("target_balance_minor")) {
+    db.exec("ALTER TABLE categories ADD COLUMN target_balance_minor INTEGER");
+  }
+  if (!categoryColumns.has("current_balance_minor")) {
+    db.exec("ALTER TABLE categories ADD COLUMN current_balance_minor INTEGER");
+  }
+  if (!categoryColumns.has("annual_expected_minor")) {
+    db.exec("ALTER TABLE categories ADD COLUMN annual_expected_minor INTEGER");
+  }
+  if (!categoryColumns.has("next_due_date")) {
+    db.exec("ALTER TABLE categories ADD COLUMN next_due_date TEXT");
+  }
+  const now = new Date().toISOString();
+  const setting = db.prepare(
+    "INSERT OR IGNORE INTO budget_settings (key, value_json, updated_at) VALUES (?, ?, ?)"
+  );
+  setting.run("period", JSON.stringify("calendar-month"), now);
+  setting.run("rollover", JSON.stringify(false), now);
+  setting.run("averageWindow", JSON.stringify(12), now);
+  setting.run("annualView", JSON.stringify("derived"), now);
 }
 
 function seedTaxonomy(db) {
