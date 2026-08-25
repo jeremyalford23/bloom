@@ -33,4 +33,9 @@ more CSVs, map their columns, preview and commit the run, then review or edit
 the resulting transactions. Importing the same activity again must report it
 as duplicate without creating another transaction.
 
+Rules apply automatically to newly committed imports. To classify existing
+activity, open **Rules**, choose **Run rules**, select the scope, preview the
+proposed changes, and explicitly apply them. Manual classifications are
+preserved unless replacement is enabled in the runner.
+
 The current architecture and financial conventions are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/financial-conventions.md`](docs/financial-conventions.md).

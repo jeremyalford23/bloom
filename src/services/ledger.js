@@ -87,7 +87,7 @@ export function updateTransactions(db, ids, changes) {
       const excluded = changes.excluded !== undefined ? Number(Boolean(changes.excluded)) : (isTransfer ? 1 : current.excluded);
       const flagged = changes.flagged !== undefined ? Number(Boolean(changes.flagged)) : current.flagged;
       db.prepare(
-        "UPDATE transactions SET merchant_id = ?, category_id = ?, notes = ?, is_transfer = ?, excluded = ?, flagged = ?, updated_at = ? WHERE id = ?"
+        "UPDATE transactions SET merchant_id = ?, category_id = ?, notes = ?, is_transfer = ?, excluded = ?, flagged = ?, classification_source = 'manual', classification_rule_id = NULL, updated_at = ? WHERE id = ?"
       ).run(merchantId, categoryId, notes, isTransfer, excluded, flagged, now, id);
       audit(db, "transaction", id, "updated", changes);
     }
@@ -207,8 +207,8 @@ export function createRule(db, input) {
     `INSERT INTO classification_rules
       (id, priority, match_type, match_text, account_id, merchant_name, category_id, mark_transfer, enabled, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-  ).run(id, priority, input.matchType ?? "contains", input.matchText.trim(), input.accountId ?? null,
-    input.merchantName ?? null, input.categoryId ?? null, Number(Boolean(input.markTransfer)), now, now);
+  ).run(id, priority, input.matchType ?? "contains", input.matchText.trim(), input.accountId || null,
+    input.merchantName || null, input.categoryId || null, Number(Boolean(input.markTransfer)), now, now);
   audit(db, "classification_rule", id, "created", input);
   return rowToObject(db.prepare("SELECT * FROM classification_rules WHERE id = ?").get(id));
 }

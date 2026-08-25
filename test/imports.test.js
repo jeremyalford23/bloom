@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { openDatabase } from "../src/db.js";
 import { commitImport, csvObjects, stageImport } from "../src/services/imports.js";
 import { createAccount, createRule, listTransactions, replaceSplits, updateTransactions } from "../src/services/ledger.js";
+import { runRules } from "../src/services/rules.js";
 
 const sampleCsv = `Date,Description,Amount,Notes
 08/21/2026,MENARDS #3082,-184.20,deck repair
@@ -59,4 +60,53 @@ test("bulk edits and exact split allocation persist", () => {
   assert.throws(() => replaceSplits(db, id, [{ categoryId: "groceries", amountMinor: -700 }, { categoryId: "home-maintenance", amountMinor: -299 }]), /exactly equal/);
   const split = replaceSplits(db, id, [{ categoryId: "groceries", amountMinor: -700 }, { categoryId: "home-maintenance", amountMinor: -300 }]);
   assert.equal(split.splits.length, 2);
+});
+
+test("manual rule runs preview safely and classify existing transactions", () => {
+  const { db, account } = fixture();
+  const staged = stageImport(db, { files: [{ name: "existing.csv", accountId: account.id, csv: "Date,Description,Amount\n08/01/2026,MENARDS #100,-25.00\n08/02/2026,FESTIVAL FOODS,-50.00", mapping: { date: "Date", description: "Description", amount: "Amount" } }] });
+  commitImport(db, staged.id);
+  createRule(db, { priority: 1, matchType: "starts-with", matchText: "MENARDS", merchantName: "Menards", categoryId: "home-maintenance" });
+
+  const preview = runRules(db, { onlyUncategorized: true });
+  assert.deepEqual(preview.summary, { considered: 2, matched: 1, changed: 1, unchanged: 1, skippedManual: 0 });
+  assert.equal(listTransactions(db).rows.find((row) => row.originalDescription.startsWith("MENARDS")).categoryId, null);
+
+  const applied = runRules(db, { onlyUncategorized: true, apply: true });
+  assert.equal(applied.summary.changed, 1);
+  const menards = listTransactions(db).rows.find((row) => row.originalDescription.startsWith("MENARDS"));
+  assert.equal(menards.categoryId, "home-maintenance");
+  assert.equal(menards.merchantName, "Menards");
+});
+
+test("manual rule runs preserve manual classifications by default", () => {
+  const { db, account } = fixture();
+  const staged = stageImport(db, { files: [{ name: "manual.csv", accountId: account.id, csv: "Date,Description,Amount\n08/01/2026,MENARDS #100,-25.00", mapping: { date: "Date", description: "Description", amount: "Amount" } }] });
+  commitImport(db, staged.id);
+  const transactionId = listTransactions(db).rows[0].id;
+  updateTransactions(db, [transactionId], { categoryId: "groceries" });
+  createRule(db, { matchType: "starts-with", matchText: "MENARDS", categoryId: "home-maintenance" });
+
+  const preserved = runRules(db, { onlyUncategorized: false, apply: true });
+  assert.equal(preserved.summary.skippedManual, 1);
+  assert.equal(listTransactions(db).rows[0].categoryId, "groceries");
+
+  const overwritten = runRules(db, { onlyUncategorized: false, overwriteManual: true, apply: true });
+  assert.equal(overwritten.summary.changed, 1);
+  assert.equal(listTransactions(db).rows[0].categoryId, "home-maintenance");
+});
+
+test("rules accept empty optional scope and action fields from browser forms", () => {
+  const { db } = fixture();
+  const rule = createRule(db, {
+    matchType: "contains",
+    matchText: "PAYMENT",
+    accountId: "",
+    merchantName: "",
+    categoryId: "",
+    markTransfer: true
+  });
+  assert.equal(rule.accountId, null);
+  assert.equal(rule.categoryId, null);
+  assert.equal(rule.markTransfer, 1);
 });

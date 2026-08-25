@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { audit, rowToObject, rowsToObjects } from "../db.js";
+import { matchingRule } from "./rules.js";
 
 export const DEFAULT_MAPPING = Object.freeze({
   date: "Date",
@@ -123,30 +124,6 @@ function fileHash(csv) {
   return createHash("sha256").update(csv).digest("hex");
 }
 
-function matchRule(rule, description) {
-  const source = description.toUpperCase();
-  const target = rule.match_text.toUpperCase();
-  if (rule.match_type === "equals") return source === target;
-  if (rule.match_type === "starts-with") return source.startsWith(target);
-  if (rule.match_type === "regex") {
-    try { return new RegExp(rule.match_text, "i").test(description); } catch { return false; }
-  }
-  return source.includes(target);
-}
-
-function applyRules(db, accountId, description) {
-  const rules = db.prepare(
-    "SELECT * FROM classification_rules WHERE enabled = 1 AND (account_id IS NULL OR account_id = ?) ORDER BY priority, created_at"
-  ).all(accountId);
-  const rule = rules.find((candidate) => matchRule(candidate, description));
-  return rule ? {
-    id: rule.id,
-    merchantName: rule.merchant_name,
-    categoryId: rule.category_id,
-    markTransfer: Boolean(rule.mark_transfer)
-  } : null;
-}
-
 export function stageImport(db, payload) {
   const files = payload.files;
   if (!Array.isArray(files) || files.length === 0) throw new Error("At least one CSV file is required");
@@ -251,17 +228,17 @@ export function commitImport(db, runId, { allowExceptions = false } = {}) {
         db.prepare("UPDATE raw_import_records SET disposition = 'duplicate' WHERE id = ?").run(record.id);
         continue;
       }
-      const rule = applyRules(db, record.account_id, record.description);
+      const rule = matchingRule(db, record.account_id, record.description);
       const merchant = findOrCreateMerchant(db, rule?.merchantName || record.description);
       const transactionId = randomUUID();
       db.prepare(
         `INSERT INTO transactions
-         (id, account_id, raw_import_record_id, posted_date, amount_minor, original_description, merchant_id, category_id, is_transfer, excluded, fingerprint, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, account_id, raw_import_record_id, posted_date, amount_minor, original_description, merchant_id, category_id, is_transfer, excluded, fingerprint, classification_source, classification_rule_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         transactionId, record.account_id, record.id, record.posted_date, record.amount_minor,
         record.description, merchant.id, rule?.categoryId ?? null, rule?.markTransfer ? 1 : 0,
-        rule?.markTransfer ? 1 : 0, record.fingerprint, now, now
+        rule?.markTransfer ? 1 : 0, record.fingerprint, rule ? "rule" : null, rule?.id ?? null, now, now
       );
       db.prepare("UPDATE raw_import_records SET disposition = 'committed', normalized_transaction_id = ? WHERE id = ?")
         .run(transactionId, record.id);

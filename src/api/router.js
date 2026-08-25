@@ -7,6 +7,7 @@ import {
   createAccount, createRule, getTransaction, listAccounts, listCategories, listRules,
   listTransactions, pairTransfers, replaceSplits, updateAccount, updateCategory, updateTransactions
 } from "../services/ledger.js";
+import { runRules } from "../services/rules.js";
 
 export function sendJson(response, status, body) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -62,6 +63,7 @@ export async function handleApi(request, response, url, db) {
   if ((params = matchPath(pathname, "/api/categories/:id")) && method === "PATCH") { sendJson(response, 200, updateCategory(db, params.id, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/rules") { sendJson(response, 200, listRules(db)); return true; }
   if (method === "POST" && pathname === "/api/rules") { sendJson(response, 201, createRule(db, await readJson(request))); return true; }
+  if (method === "POST" && pathname === "/api/rules/run") { sendJson(response, 200, runRules(db, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/transactions") { sendJson(response, 200, listTransactions(db, Object.fromEntries(url.searchParams))); return true; }
   if (method === "PATCH" && pathname === "/api/transactions") { const body = await readJson(request); sendJson(response, 200, updateTransactions(db, body.ids, body.changes ?? {})); return true; }
   if ((params = matchPath(pathname, "/api/transactions/:id")) && method === "GET") { const value = getTransaction(db, params.id); sendJson(response, value ? 200 : 404, value ?? { error: "Transaction not found" }); return true; }

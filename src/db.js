@@ -155,8 +155,21 @@ export function openDatabase(path = process.env.BLOOM_DB_PATH ?? "data/bloom.db"
     }
   };
   db.exec(SCHEMA);
+  migrateSchema(db);
   seedTaxonomy(db);
   return db;
+}
+
+function migrateSchema(db) {
+  const transactionColumns = new Set(
+    db.prepare("PRAGMA table_info(transactions)").all().map((column) => column.name)
+  );
+  if (!transactionColumns.has("classification_source")) {
+    db.exec("ALTER TABLE transactions ADD COLUMN classification_source TEXT");
+  }
+  if (!transactionColumns.has("classification_rule_id")) {
+    db.exec("ALTER TABLE transactions ADD COLUMN classification_rule_id TEXT");
+  }
 }
 
 function seedTaxonomy(db) {
