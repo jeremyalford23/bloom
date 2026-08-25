@@ -4,7 +4,7 @@ import { validateTaxonomy } from "../domain/validation.js";
 import { rowToObject, rowsToObjects } from "../db.js";
 import { commitImport, importDetail, importHistory, resolveImportRecord, stageImport } from "../services/imports.js";
 import {
-  createAccount, createRule, getTransaction, listAccounts, listCategories, listRules,
+  createAccount, createCategory, createRule, deleteCategory, getTransaction, listAccounts, listCategories, listRules,
   listTransactions, pairTransfers, replaceSplits, updateAccount, updateCategory, updateTransactions
 } from "../services/ledger.js";
 import { runRules } from "../services/rules.js";
@@ -63,6 +63,7 @@ export async function handleApi(request, response, url, db) {
   if (method === "POST" && pathname === "/api/accounts") { sendJson(response, 201, createAccount(db, await readJson(request))); return true; }
   if ((params = matchPath(pathname, "/api/accounts/:id")) && method === "PATCH") { sendJson(response, 200, updateAccount(db, params.id, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/categories") { sendJson(response, 200, listCategories(db)); return true; }
+  if (method === "POST" && pathname === "/api/categories") { sendJson(response, 201, createCategory(db, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/budget") { sendJson(response, 200, budgetOverview(db, url.searchParams.get("month") || undefined)); return true; }
   if (method === "POST" && pathname === "/api/budgets") { sendJson(response, 201, createBudget(db, await readJson(request))); return true; }
   if ((params = matchPath(pathname, "/api/budgets/:id")) && method === "DELETE") { sendJson(response, 200, deleteBudget(db, params.id)); return true; }
@@ -74,6 +75,7 @@ export async function handleApi(request, response, url, db) {
   if (method === "GET" && pathname === "/api/irregular") { sendJson(response, 200, irregularExpenses(db, Number(url.searchParams.get("year")) || undefined)); return true; }
   if (method === "GET" && pathname === "/api/planning-groups") { sendJson(response, 200, rowsToObjects(db.prepare("SELECT * FROM planning_groups ORDER BY name").all())); return true; }
   if ((params = matchPath(pathname, "/api/categories/:id")) && method === "PATCH") { sendJson(response, 200, updateCategory(db, params.id, await readJson(request))); return true; }
+  if ((params = matchPath(pathname, "/api/categories/:id")) && method === "DELETE") { sendJson(response, 200, deleteCategory(db, params.id)); return true; }
   if (method === "GET" && pathname === "/api/rules") { sendJson(response, 200, listRules(db)); return true; }
   if (method === "POST" && pathname === "/api/rules") { sendJson(response, 201, createRule(db, await readJson(request))); return true; }
   if (method === "POST" && pathname === "/api/rules/run") { sendJson(response, 200, runRules(db, await readJson(request))); return true; }

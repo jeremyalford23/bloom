@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS categories (
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS deleted_categories (
+  id TEXT PRIMARY KEY,
+  deleted_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -235,11 +239,12 @@ function seedTaxonomy(db) {
     groupStatement.run(group.id, group.name, group.kind, group.description);
   }
   const categoryStatement = db.prepare(
-    "INSERT OR IGNORE INTO categories (id, name, planning_group_id, cadence, active, created_at) VALUES (?, ?, ?, ?, 1, ?)"
+    `INSERT OR IGNORE INTO categories (id, name, planning_group_id, cadence, active, created_at)
+     SELECT ?, ?, ?, ?, 1, ? WHERE NOT EXISTS (SELECT 1 FROM deleted_categories WHERE id = ?)`
   );
   for (const category of SEED_CATEGORIES) {
     const cadence = category.planningGroupId === "irregular-expenses" ? "irregular" : "monthly";
-    categoryStatement.run(category.id, category.name, category.planningGroupId, cadence, now);
+    categoryStatement.run(category.id, category.name, category.planningGroupId, cadence, now, category.id);
   }
 }
 
