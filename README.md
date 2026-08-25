@@ -38,4 +38,9 @@ activity, open **Rules**, choose **Run rules**, select the scope, preview the
 proposed changes, and explicitly apply them. Manual classifications are
 preserved unless replacement is enabled in the runner.
 
+Phase 2 adds monthly budget rollups, category-level history, recurring-pattern
+review, irregular-expense targets, and budget configuration. Open **Budget**
+to inspect actual versus budget. Selecting a category opens its detail page,
+where effective-dated budget records can be added or deleted independently.
+
 The current architecture and financial conventions are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/financial-conventions.md`](docs/financial-conventions.md).

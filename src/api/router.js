@@ -8,6 +8,10 @@ import {
   listTransactions, pairTransfers, replaceSplits, updateAccount, updateCategory, updateTransactions
 } from "../services/ledger.js";
 import { runRules } from "../services/rules.js";
+import {
+  budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget,
+  getBudgetSettings, irregularExpenses, recurringExpenses, updateBudgetSettings
+} from "../services/budget.js";
 
 export function sendJson(response, status, body) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -59,6 +63,15 @@ export async function handleApi(request, response, url, db) {
   if (method === "POST" && pathname === "/api/accounts") { sendJson(response, 201, createAccount(db, await readJson(request))); return true; }
   if ((params = matchPath(pathname, "/api/accounts/:id")) && method === "PATCH") { sendJson(response, 200, updateAccount(db, params.id, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/categories") { sendJson(response, 200, listCategories(db)); return true; }
+  if (method === "GET" && pathname === "/api/budget") { sendJson(response, 200, budgetOverview(db, url.searchParams.get("month") || undefined)); return true; }
+  if (method === "POST" && pathname === "/api/budgets") { sendJson(response, 201, createBudget(db, await readJson(request))); return true; }
+  if ((params = matchPath(pathname, "/api/budgets/:id")) && method === "DELETE") { sendJson(response, 200, deleteBudget(db, params.id)); return true; }
+  if ((params = matchPath(pathname, "/api/categories/:id/budget")) && method === "GET") { sendJson(response, 200, categoryBudgetDetail(db, params.id, url.searchParams.get("month") || undefined)); return true; }
+  if (method === "GET" && pathname === "/api/budget-settings") { sendJson(response, 200, getBudgetSettings(db)); return true; }
+  if (method === "PATCH" && pathname === "/api/budget-settings") { sendJson(response, 200, updateBudgetSettings(db, await readJson(request))); return true; }
+  if (method === "GET" && pathname === "/api/recurring") { sendJson(response, 200, recurringExpenses(db)); return true; }
+  if (method === "POST" && pathname === "/api/recurring/decision") { sendJson(response, 200, decideRecurring(db, await readJson(request))); return true; }
+  if (method === "GET" && pathname === "/api/irregular") { sendJson(response, 200, irregularExpenses(db, Number(url.searchParams.get("year")) || undefined)); return true; }
   if (method === "GET" && pathname === "/api/planning-groups") { sendJson(response, 200, rowsToObjects(db.prepare("SELECT * FROM planning_groups ORDER BY name").all())); return true; }
   if ((params = matchPath(pathname, "/api/categories/:id")) && method === "PATCH") { sendJson(response, 200, updateCategory(db, params.id, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/rules") { sendJson(response, 200, listRules(db)); return true; }

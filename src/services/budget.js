@@ -1,0 +1,250 @@
+import { randomUUID } from "node:crypto";
+import { audit, rowToObject, rowsToObjects } from "../db.js";
+
+function validMonth(month) {
+  if (!/^\d{4}-\d{2}$/.test(month || "")) throw new Error("Month must use YYYY-MM");
+  const number = Number(month.slice(5));
+  if (number < 1 || number > 12) throw new Error("Month must use YYYY-MM");
+  return month;
+}
+
+function currentMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function shiftMonth(month, offset) {
+  const [year, number] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, number - 1 + offset, 1));
+  return date.toISOString().slice(0, 7);
+}
+
+const ACTIVITY_CTE = `
+  WITH activity AS (
+    SELECT t.id transaction_id, t.posted_date, t.amount_minor, t.category_id,
+      t.merchant_id, m.name merchant_name, t.original_description
+    FROM transactions t LEFT JOIN merchants m ON m.id = t.merchant_id
+    WHERE t.is_transfer = 0 AND t.excluded = 0 AND t.category_id IS NOT NULL
+    UNION ALL
+    SELECT t.id transaction_id, t.posted_date, s.amount_minor, s.category_id,
+      t.merchant_id, m.name merchant_name, t.original_description
+    FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
+    LEFT JOIN merchants m ON m.id = t.merchant_id
+    WHERE t.is_transfer = 0 AND t.excluded = 0
+  )
+`;
+
+function budgetAt(db, categoryId, month) {
+  return db.prepare(
+    `SELECT * FROM budgets WHERE category_id = ? AND effective_from <= ?
+     AND (effective_to IS NULL OR effective_to >= ?)
+     ORDER BY effective_from DESC, created_at DESC LIMIT 1`
+  ).get(categoryId, month, month);
+}
+
+export function budgetOverview(db, requestedMonth = currentMonth()) {
+  const month = validMonth(requestedMonth);
+  const categories = rowsToObjects(db.prepare(
+    ACTIVITY_CTE + `
+    SELECT c.id, c.name, c.cadence, c.planning_group_id, p.name planning_group_name, p.kind,
+      COALESCE(SUM(CASE WHEN substr(a.posted_date, 1, 7) = ? AND a.amount_minor < 0 THEN -a.amount_minor ELSE 0 END), 0) actual_minor,
+      COALESCE(SUM(CASE WHEN a.posted_date >= ? AND a.posted_date < ? AND a.amount_minor < 0 THEN -a.amount_minor ELSE 0 END), 0) history_minor,
+      COUNT(DISTINCT CASE WHEN substr(a.posted_date, 1, 7) = ? THEN a.transaction_id END) transaction_count
+    FROM categories c JOIN planning_groups p ON p.id = c.planning_group_id
+    LEFT JOIN activity a ON a.category_id = c.id
+    WHERE c.active = 1 GROUP BY c.id ORDER BY p.name, c.name`
+  ).all(month, shiftMonth(month, -11) + "-01", shiftMonth(month, 1) + "-01", month));
+
+  for (const category of categories) {
+    const budget = budgetAt(db, category.id, month);
+    category.budgetId = budget?.id ?? null;
+    category.budgetMinor = budget?.amount_minor ?? 0;
+    category.average12Minor = Math.round(category.historyMinor / 12);
+    category.deltaMinor = category.actualMinor - category.budgetMinor;
+  }
+
+  const groups = [];
+  for (const category of categories) {
+    let group = groups.find((item) => item.id === category.planningGroupId);
+    if (!group) {
+      group = { id: category.planningGroupId, name: category.planningGroupName, kind: category.kind, categories: [], budgetMinor: 0, actualMinor: 0, average12Minor: 0 };
+      groups.push(group);
+    }
+    group.categories.push(category);
+    group.budgetMinor += category.budgetMinor;
+    group.actualMinor += category.actualMinor;
+    group.average12Minor += category.average12Minor;
+  }
+
+  const transactionSummary = rowToObject(db.prepare(
+    `SELECT
+      COALESCE(SUM(CASE WHEN t.is_transfer = 1 THEN ABS(t.amount_minor) ELSE 0 END), 0) transfer_minor,
+      COALESCE(SUM(CASE WHEN p.kind = 'income' AND t.amount_minor > 0 AND t.is_transfer = 0 THEN t.amount_minor ELSE 0 END), 0) income_minor,
+      COALESCE(SUM(CASE WHEN p.kind = 'allocation' AND t.amount_minor < 0 AND t.is_transfer = 0 THEN -t.amount_minor ELSE 0 END), 0) saved_minor
+     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+     LEFT JOIN planning_groups p ON p.id = c.planning_group_id
+     WHERE substr(t.posted_date, 1, 7) = ?`
+  ).get(month));
+  const spendingGroups = groups.filter((group) => group.kind === "expense" && group.id !== "irregular-expenses");
+  const spendingMinor = spendingGroups.reduce((total, group) => total + group.actualMinor, 0);
+  const spendingBudgetMinor = spendingGroups.reduce((total, group) => total + group.budgetMinor, 0);
+  return {
+    month,
+    previousMonth: shiftMonth(month, -1),
+    nextMonth: shiftMonth(month, 1),
+    groups,
+    summary: {
+      spendingMinor,
+      spendingBudgetMinor,
+      spendingDeltaMinor: spendingMinor - spendingBudgetMinor,
+      incomeMinor: transactionSummary.incomeMinor,
+      savedMinor: transactionSummary.savedMinor,
+      transferMinor: Math.round(transactionSummary.transferMinor / 2)
+    }
+  };
+}
+
+export function categoryBudgetDetail(db, categoryId, requestedMonth = currentMonth()) {
+  const month = validMonth(requestedMonth);
+  const category = rowToObject(db.prepare(
+    `SELECT c.*, p.name planning_group_name, p.kind FROM categories c
+     JOIN planning_groups p ON p.id = c.planning_group_id WHERE c.id = ?`
+  ).get(categoryId));
+  if (!category) throw Object.assign(new Error("Category not found"), { statusCode: 404 });
+  const months = Array.from({ length: 12 }, (_, index) => shiftMonth(month, index - 11));
+  const historyRows = db.prepare(
+    ACTIVITY_CTE + ` SELECT substr(posted_date, 1, 7) month,
+      COALESCE(SUM(CASE WHEN amount_minor < 0 THEN -amount_minor ELSE 0 END), 0) actual_minor,
+      COUNT(DISTINCT transaction_id) transaction_count
+      FROM activity WHERE category_id = ? AND posted_date >= ? AND posted_date < ?
+      GROUP BY substr(posted_date, 1, 7)`
+  ).all(categoryId, months[0] + "-01", shiftMonth(month, 1) + "-01");
+  const actualByMonth = new Map(historyRows.map((row) => [row.month, row]));
+  category.history = months.map((historyMonth) => {
+    const actual = actualByMonth.get(historyMonth);
+    const budget = budgetAt(db, categoryId, historyMonth);
+    return {
+      month: historyMonth,
+      actualMinor: actual?.actual_minor ?? 0,
+      transactionCount: actual?.transaction_count ?? 0,
+      budgetMinor: budget?.amount_minor ?? 0,
+      budgetId: budget?.id ?? null
+    };
+  });
+  const totals = category.history.map((item) => item.actualMinor);
+  const average = (count) => Math.round(totals.slice(-count).reduce((sum, value) => sum + value, 0) / count);
+  category.averages = { threeMonthMinor: average(3), sixMonthMinor: average(6), twelveMonthMinor: average(12) };
+  category.current = category.history.at(-1);
+  category.overBudgetMonths = category.history.filter((item) => item.budgetMinor > 0 && item.actualMinor > item.budgetMinor).length;
+  category.budgets = rowsToObjects(db.prepare(
+    "SELECT * FROM budgets WHERE category_id = ? ORDER BY effective_from DESC, created_at DESC"
+  ).all(categoryId));
+  category.transactions = rowsToObjects(db.prepare(
+    ACTIVITY_CTE + ` SELECT transaction_id id, posted_date, merchant_name, original_description,
+      -amount_minor amount_minor FROM activity WHERE category_id = ? AND substr(posted_date, 1, 7) = ?
+      AND amount_minor < 0 ORDER BY amount_minor ASC LIMIT 50`
+  ).all(categoryId, month));
+  return category;
+}
+
+export function createBudget(db, input) {
+  if (!input.categoryId) throw new Error("Category is required");
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 0) throw new Error("Budget amount must be a non-negative number of cents");
+  const effectiveFrom = validMonth(input.effectiveFrom || currentMonth());
+  const effectiveTo = input.effectiveTo ? validMonth(input.effectiveTo) : null;
+  if (effectiveTo && effectiveTo < effectiveFrom) throw new Error("Budget end cannot precede its start");
+  if (!db.prepare("SELECT id FROM categories WHERE id = ?").get(input.categoryId)) throw new Error("Category not found");
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO budgets (id, category_id, amount_minor, cadence, effective_from, effective_to, note, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, input.categoryId, input.amountMinor, input.cadence || "monthly", effectiveFrom, effectiveTo, input.note || null, now, now);
+  audit(db, "budget", id, "created", input);
+  return rowToObject(db.prepare("SELECT * FROM budgets WHERE id = ?").get(id));
+}
+
+export function deleteBudget(db, id) {
+  const existing = db.prepare("SELECT * FROM budgets WHERE id = ?").get(id);
+  if (!existing) throw Object.assign(new Error("Budget not found"), { statusCode: 404 });
+  db.prepare("DELETE FROM budgets WHERE id = ?").run(id);
+  audit(db, "budget", id, "deleted", { categoryId: existing.category_id, amountMinor: existing.amount_minor });
+  return { id, deleted: true };
+}
+
+export function getBudgetSettings(db) {
+  return Object.fromEntries(db.prepare("SELECT key, value_json FROM budget_settings").all().map((row) => [row.key, JSON.parse(row.value_json)]));
+}
+
+export function updateBudgetSettings(db, input) {
+  const allowed = new Set(["period", "rollover", "averageWindow", "annualView"]);
+  const statement = db.prepare(
+    `INSERT INTO budget_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+  );
+  const now = new Date().toISOString();
+  for (const [key, value] of Object.entries(input)) if (allowed.has(key)) statement.run(key, JSON.stringify(value), now);
+  return getBudgetSettings(db);
+}
+
+export function recurringExpenses(db) {
+  const detected = rowsToObjects(db.prepare(
+    `SELECT t.merchant_id, m.name merchant_name, t.category_id, c.name category_name,
+      COUNT(*) hit_count, COUNT(DISTINCT substr(t.posted_date, 1, 7)) month_count,
+      ROUND(AVG(ABS(t.amount_minor))) average_minor, MIN(t.posted_date) first_date, MAX(t.posted_date) last_date,
+      MIN(ABS(t.amount_minor)) minimum_minor, MAX(ABS(t.amount_minor)) maximum_minor
+     FROM transactions t JOIN merchants m ON m.id = t.merchant_id
+     LEFT JOIN categories c ON c.id = t.category_id
+     WHERE t.amount_minor < 0 AND t.is_transfer = 0 AND t.excluded = 0
+     GROUP BY t.merchant_id HAVING COUNT(*) >= 3 ORDER BY month_count DESC, hit_count DESC`
+  ).all());
+  const decisions = rowsToObjects(db.prepare(
+    `SELECT r.*, c.name category_name FROM recurring_items r
+     LEFT JOIN categories c ON c.id = r.category_id ORDER BY r.next_due_date, r.merchant_name`
+  ).all());
+  const decisionMap = new Map(decisions.map((item) => [item.merchantId, item]));
+  const candidates = detected.map((item) => {
+    const decision = decisionMap.get(item.merchantId);
+    const variance = item.averageMinor ? Math.round(((item.maximumMinor - item.minimumMinor) / item.averageMinor) * 100) : 0;
+    return { ...item, variancePercent: variance, confidence: item.monthCount >= 3 && variance <= 10 ? "high" : "low", decision: decision?.state ?? "review" };
+  });
+  return {
+    candidates: candidates.filter((item) => item.decision === "review"),
+    confirmed: decisions.filter((item) => item.state === "confirmed"),
+    dismissed: decisions.filter((item) => item.state === "dismissed")
+  };
+}
+
+export function decideRecurring(db, input) {
+  if (!input.merchantName || !input.state) throw new Error("Merchant and decision are required");
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO recurring_items (id, merchant_id, merchant_name, category_id, amount_minor, cadence, next_due_date, state, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'detected', ?, ?)
+     ON CONFLICT(merchant_name, cadence) DO UPDATE SET category_id = excluded.category_id,
+       amount_minor = excluded.amount_minor, next_due_date = excluded.next_due_date,
+       state = excluded.state, updated_at = excluded.updated_at`
+  ).run(id, input.merchantId || null, input.merchantName, input.categoryId || null, input.amountMinor || 0, input.cadence || "monthly", input.nextDueDate || null, input.state, now, now);
+  return recurringExpenses(db);
+}
+
+export function irregularExpenses(db, year = new Date().getUTCFullYear()) {
+  const categories = rowsToObjects(db.prepare(
+    ACTIVITY_CTE + ` SELECT c.*, p.name planning_group_name,
+      COALESCE(SUM(CASE WHEN substr(a.posted_date, 1, 4) = ? AND a.amount_minor < 0 THEN -a.amount_minor ELSE 0 END), 0) spent_year_minor
+     FROM categories c JOIN planning_groups p ON p.id = c.planning_group_id
+     LEFT JOIN activity a ON a.category_id = c.id
+     WHERE c.active = 1 AND (c.cadence = 'irregular' OR c.planning_group_id = 'irregular-expenses')
+     GROUP BY c.id ORDER BY c.name`
+  ).all(String(year)));
+  return {
+    year,
+    categories,
+    summary: {
+      targetMinor: categories.reduce((sum, item) => sum + Number(item.targetBalanceMinor || 0), 0),
+      heldMinor: categories.reduce((sum, item) => sum + Number(item.currentBalanceMinor || 0), 0),
+      expectedMinor: categories.reduce((sum, item) => sum + Number(item.annualExpectedMinor || 0), 0),
+      spentMinor: categories.reduce((sum, item) => sum + Number(item.spentYearMinor || 0), 0)
+    }
+  };
+}

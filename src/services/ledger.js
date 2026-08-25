@@ -190,9 +190,15 @@ export function updateCategory(db, id, input) {
   const current = db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
   if (!current) throw Object.assign(new Error("Category not found"), { statusCode: 404 });
   db.prepare(
-    "UPDATE categories SET name = ?, planning_group_id = ?, cadence = ?, active = ? WHERE id = ?"
+    `UPDATE categories SET name = ?, planning_group_id = ?, cadence = ?, active = ?,
+      target_balance_minor = ?, current_balance_minor = ?, annual_expected_minor = ?, next_due_date = ?
+     WHERE id = ?`
   ).run(input.name ?? current.name, input.planningGroupId ?? current.planning_group_id, input.cadence ?? current.cadence,
-    input.active === undefined ? current.active : Number(Boolean(input.active)), id);
+    input.active === undefined ? current.active : Number(Boolean(input.active)),
+    input.targetBalanceMinor ?? current.target_balance_minor,
+    input.currentBalanceMinor ?? current.current_balance_minor,
+    input.annualExpectedMinor ?? current.annual_expected_minor,
+    input.nextDueDate ?? current.next_due_date, id);
   audit(db, "category", id, "updated", input);
   return rowToObject(db.prepare("SELECT * FROM categories WHERE id = ?").get(id));
 }
