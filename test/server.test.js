@@ -38,3 +38,18 @@ test("domain endpoint exposes versioned Phase 0 definitions", () => withServer(a
   assert.ok(body.models.Transaction);
   assert.ok(body.seedCategories.length > 0);
 }));
+
+test("category API creates and deletes a new budget category", () => withServer(async (baseUrl) => {
+  const createdResponse = await fetch(`${baseUrl}/api/categories`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Childcare", planningGroupId: "essential-variable", cadence: "monthly" })
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 201);
+  assert.equal(created.name, "Childcare");
+
+  const deletedResponse = await fetch(`${baseUrl}/api/categories/${created.id}`, { method: "DELETE" });
+  assert.equal(deletedResponse.status, 200);
+  assert.deepEqual(await deletedResponse.json(), { id: created.id, deleted: true });
+}));

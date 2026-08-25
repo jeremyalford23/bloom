@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { openDatabase } from "../src/db.js";
 import { commitImport, stageImport } from "../src/services/imports.js";
-import { createAccount, updateCategory } from "../src/services/ledger.js";
+import { createAccount, createCategory, deleteCategory, updateCategory } from "../src/services/ledger.js";
 import {
   budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget,
   getBudgetSettings, irregularExpenses, recurringExpenses, updateBudgetSettings
@@ -56,6 +56,22 @@ test("category detail supports adding and deleting independent budget records", 
   assert.equal(detail.budgets.length, 1);
   assert.throws(() => deleteBudget(db, second.id), /not found/);
   assert.equal(detail.budgets[0].id, first.id);
+});
+
+test("categories can be created and unused categories can be deleted with their budgets", () => {
+  const { db } = fixture();
+  const category = createCategory(db, { name: "Childcare", planningGroupId: "essential-variable", cadence: "monthly" });
+  createBudget(db, { categoryId: category.id, amountMinor: 120000, effectiveFrom: "2026-08" });
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM budgets WHERE category_id = ?").get(category.id).count, 1);
+  assert.deepEqual(deleteCategory(db, category.id), { id: category.id, deleted: true });
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM categories WHERE id = ?").get(category.id).count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM budgets WHERE category_id = ?").get(category.id).count, 0);
+});
+
+test("categories referenced by transactions cannot be deleted", () => {
+  const { db } = fixture();
+  assert.throws(() => deleteCategory(db, "restaurants"), /cannot be deleted/);
+  assert.ok(db.prepare("SELECT id FROM categories WHERE id = 'restaurants'").get());
 });
 
 test("recurring detection can be confirmed or dismissed", () => {

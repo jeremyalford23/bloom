@@ -186,6 +186,50 @@ export function listCategories(db) {
   ).all());
 }
 
+export function createCategory(db, input) {
+  const name = input.name?.trim();
+  if (!name) throw new Error("Category name is required");
+  if (!input.planningGroupId || !db.prepare("SELECT id FROM planning_groups WHERE id = ?").get(input.planningGroupId)) {
+    throw new Error("Valid planning group is required");
+  }
+  if (db.prepare("SELECT id FROM categories WHERE name = ? COLLATE NOCASE").get(name)) {
+    throw Object.assign(new Error("A category with this name already exists"), { statusCode: 409 });
+  }
+  const allowedCadences = new Set(["monthly", "annual", "irregular"]);
+  const cadence = input.cadence ?? "monthly";
+  if (!allowedCadences.has(cadence)) throw new Error("Invalid category cadence");
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO categories (id, name, planning_group_id, cadence, active, created_at) VALUES (?, ?, ?, ?, 1, ?)"
+  ).run(id, name, input.planningGroupId, cadence, now);
+  audit(db, "category", id, "created", input);
+  return rowToObject(db.prepare("SELECT * FROM categories WHERE id = ?").get(id));
+}
+
+export function deleteCategory(db, id) {
+  const category = db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
+  if (!category) throw Object.assign(new Error("Category not found"), { statusCode: 404 });
+  const references = {
+    transactions: Number(db.prepare("SELECT COUNT(*) count FROM transactions WHERE category_id = ?").get(id).count),
+    splits: Number(db.prepare("SELECT COUNT(*) count FROM transaction_splits WHERE category_id = ?").get(id).count),
+    rules: Number(db.prepare("SELECT COUNT(*) count FROM classification_rules WHERE category_id = ?").get(id).count),
+    recurringItems: Number(db.prepare("SELECT COUNT(*) count FROM recurring_items WHERE category_id = ?").get(id).count)
+  };
+  if (Object.values(references).some(Boolean)) {
+    throw Object.assign(new Error("Category cannot be deleted while it is used by transactions, splits, rules, or recurring items"), {
+      statusCode: 409
+    });
+  }
+  db.transaction(() => {
+    db.prepare("DELETE FROM budgets WHERE category_id = ?").run(id);
+    db.prepare("INSERT OR REPLACE INTO deleted_categories (id, deleted_at) VALUES (?, ?)").run(id, new Date().toISOString());
+    db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+    audit(db, "category", id, "deleted", { name: category.name });
+  })();
+  return { id, deleted: true };
+}
+
 export function updateCategory(db, id, input) {
   const current = db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
   if (!current) throw Object.assign(new Error("Category not found"), { statusCode: 404 });
