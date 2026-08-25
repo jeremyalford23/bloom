@@ -10,7 +10,7 @@ Bloom currently has no third-party runtime dependencies.
 npm start
 ```
 
-The server listens on `0.0.0.0:8712` by default. Override the port with `PORT`.
+The server listens on `0.0.0.0:3001` by default. Override the port with `PORT`.
 
 Available endpoints:
 
@@ -19,11 +19,23 @@ Available endpoints:
 - `/api/version` — current API version
 - `/api/domain` — Phase 0 domain definitions
 
+Phase 1 uses Node's built-in SQLite support and stores household data in
+`data/bloom.db`. Set `BLOOM_DB_PATH` to use another location.
+
 ## Verify
 
 ```bash
-npm test
+npm run check
 ```
 
-The current architecture and financial conventions are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/financial-conventions.md`](docs/financial-conventions.md).
+Phase 1 is ready to test through the browser: create an account, import one or
+more CSVs, map their columns, preview and commit the run, then review or edit
+the resulting transactions. Importing the same activity again must report it
+as duplicate without creating another transaction.
 
+Rules apply automatically to newly committed imports. To classify existing
+activity, open **Rules**, choose **Run rules**, select the scope, preview the
+proposed changes, and explicitly apply them. Manual classifications are
+preserved unless replacement is enabled in the runner.
+
+The current architecture and financial conventions are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/financial-conventions.md`](docs/financial-conventions.md).
