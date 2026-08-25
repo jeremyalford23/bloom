@@ -1,6 +1,6 @@
 {
   "name": "bloom-finance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A private household financial decision engine.",
   "type": "module",
@@ -8,8 +8,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --test"
+    "check": "node --check src/server.js && node --check public/app.js && node --test"
   },
-  "engines": { "node": ">=22" }
+  "engines": { "node": ">=24" }
 }
-

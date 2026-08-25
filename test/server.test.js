@@ -5,7 +5,7 @@ import { API_VERSION } from "../src/api/version.js";
 import { createBloomServer } from "../src/server.js";
 
 async function withServer(run) {
-  const server = createBloomServer().listen(0, "127.0.0.1");
+  const server = createBloomServer({ databasePath: ":memory:" }).listen(0, "127.0.0.1");
   await once(server, "listening");
   try {
     await run(`http://127.0.0.1:${server.address().port}`);
@@ -26,7 +26,7 @@ test("health endpoint reports version and taxonomy readiness", () => withServer(
   const response = await fetch(`${baseUrl}/api/health`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    status: "ok", apiVersion: API_VERSION, checks: { taxonomy: "ok" }
+    status: "ok", apiVersion: API_VERSION, checks: { taxonomy: "ok", database: "ok" }
   });
 }));
 

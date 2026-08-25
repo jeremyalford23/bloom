@@ -1,53 +1,13 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Bloom household financial decision engine">
-    <title>Bloom — Household Financial Decision Engine</title>
-    <link rel="stylesheet" href="/styles.css">
+    <title>Bloom — Household</title><link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Bloom home">
-        <span class="brand-mark">B</span><span>Bloom</span>
-      </a>
-      <div class="status"><span class="status-dot"></span> Foundation online <span id="version">v0.1.0</span></div>
-    </header>
-    <main>
-      <section class="hero">
-        <p class="eyebrow">HOUSEHOLD FINANCIAL DECISION ENGINE</p>
-        <h1>Your financial reality,<br><em>made actionable.</em></h1>
-        <p class="lede">Bloom will turn actual household activity into clear requirements, resilient targets, and a prioritized answer to one question: where should the next dollar go?</p>
-        <div class="phase-pill"><span>PHASE 0</span> Product and financial-model foundation</div>
-      </section>
-
-      <section class="content" aria-labelledby="foundation-title">
-        <div class="section-heading">
-          <div><p class="eyebrow">FOUNDATION</p><h2 id="foundation-title">Built for decisions, not decoration.</h2></div>
-          <p>Every future result will be deterministic, versioned, and traceable to the activity and assumptions that produced it.</p>
-        </div>
-        <div class="flow" aria-label="Bloom data flow">
-          <article><span>01</span><h3>Raw imports</h3><p>Original source evidence stays intact.</p></article>
-          <article><span>02</span><h3>Transactions</h3><p>One canonical household ledger.</p></article>
-          <article><span>03</span><h3>Budget</h3><p>Actual behavior meets intention.</p></article>
-          <article><span>04</span><h3>Living plan</h3><p>Requirements recalculate as life changes.</p></article>
-          <article><span>05</span><h3>Actions</h3><p>The next move, supported by evidence.</p></article>
-        </div>
-      </section>
-
-      <section class="principles" aria-label="Product principles">
-        <article><span class="icon">⌂</span><div><h3>Private by design</h3><p>One household. No multi-tenant machinery, sales funnels, or unnecessary exposure.</p></div></article>
-        <article><span class="icon">↥</span><div><h3>CSV first</h3><p>Portable source files, normalized into a dependable and reviewable ledger.</p></div></article>
-        <article><span class="icon">◎</span><div><h3>Evidence over noise</h3><p>Calculations and explanations exist to support a decision—not fill a dashboard.</p></div></article>
-      </section>
-    </main>
-    <footer><span>Bloom · Foundation release</span><a href="/api/health">System health</a></footer>
-    <script type="module">
-      fetch("/api/version").then((response) => response.json()).then(({ version }) => {
-        document.querySelector("#version").textContent = `v${version}`;
-      }).catch(() => {});
-    </script>
+    <div id="app"><div class="boot">Opening Bloom…</div></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>
-

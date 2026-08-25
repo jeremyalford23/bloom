@@ -3,48 +3,33 @@ import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { API_VERSION } from "./api/version.js";
-import { DOMAIN_DEFINITION } from "./domain/model.js";
-import { validateTaxonomy } from "./domain/validation.js";
+import { openDatabase } from "./db.js";
+import { handleApi, sendJson } from "./api/router.js";
 
 const publicDirectory = fileURLToPath(new URL("../public/", import.meta.url));
-const port = Number.parseInt(process.env.PORT ?? "8712", 10);
+const port = Number.parseInt(process.env.PORT ?? "3001", 10);
 const host = process.env.HOST ?? "0.0.0.0";
 const contentTypes = {
   ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"
 };
 
-function sendJson(response, status, body) {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  response.end(JSON.stringify(body));
-}
-
-export function createBloomServer() {
+export function createBloomServer(options = {}) {
+  const db = options.db ?? openDatabase(options.databasePath);
   return createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
-    if (request.method !== "GET") {
-      sendJson(response, 405, { error: "Method not allowed" });
+    try {
+      if (url.pathname.startsWith("/api/")) {
+        if (!await handleApi(request, response, url, db)) sendJson(response, 404, { error: "API route not found" });
+        return;
+      }
+    } catch (error) {
+      console.error(error);
+      sendJson(response, error.statusCode ?? 400, { error: error.message });
       return;
     }
-    if (url.pathname === "/api/health") {
-      const taxonomyErrors = validateTaxonomy();
-      sendJson(response, taxonomyErrors.length ? 503 : 200, {
-        status: taxonomyErrors.length ? "degraded" : "ok",
-        apiVersion: API_VERSION,
-        checks: { taxonomy: taxonomyErrors.length ? taxonomyErrors : "ok" }
-      });
-      return;
-    }
-    if (url.pathname === "/api/version") {
-      sendJson(response, 200, { name: "Bloom API", version: API_VERSION });
-      return;
-    }
-    if (url.pathname === "/api/domain") {
-      sendJson(response, 200, { apiVersion: API_VERSION, ...DOMAIN_DEFINITION });
-      return;
-    }
-
-    const relativePath = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+    if (request.method !== "GET") { sendJson(response, 405, { error: "Method not allowed" }); return; }
+    const relativePath = url.pathname === "/" || !extname(url.pathname) ? "index.html" : url.pathname.slice(1);
     if (relativePath.includes("..")) {
       sendJson(response, 400, { error: "Invalid path" });
       return;
@@ -65,4 +50,3 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`Bloom ${API_VERSION} listening on http://${host}:${port}`);
   });
 }
-
