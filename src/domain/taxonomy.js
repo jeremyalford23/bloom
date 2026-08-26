@@ -23,8 +23,8 @@ export const SEED_CATEGORIES = Object.freeze([
   ["clothing", "Clothing", "lifestyle-discretionary"],
   ["home-maintenance", "Home Maintenance", "irregular-expenses"],
   ["travel", "Travel", "lifestyle-discretionary"],
+  ["income", "Income", "income"],
   ["paycheck", "Paycheck", "income"],
   ["account-transfer", "Account Transfer", "transfers"],
   ["retirement-contribution", "Retirement Contribution", "savings-investing"]
 ].map(([id, name, planningGroupId]) => Object.freeze({ id, name, planningGroupId, active: true })));
-
