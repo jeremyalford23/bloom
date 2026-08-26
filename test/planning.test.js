@@ -12,7 +12,7 @@ function transaction(db, { id, categoryId, date, amountMinor }) {
     .run(id, date, amountMinor, id, categoryId, id, now, now);
 }
 
-test("planning v1 is deterministic and traces results to source inputs", () => {
+test("planning v2 is deterministic and traces results to source inputs", () => {
   const db = openDatabase(":memory:");
   createAccount(db, { id:"ignored", name:"Checking", type:"checking", role:"Operating cash", balanceMinor:300000, balanceAsOf:"2026-08-31" });
   const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
@@ -23,9 +23,46 @@ test("planning v1 is deterministic and traces results to source inputs", () => {
   transaction(db, { id:"income-1", categoryId:"paycheck", date:"2026-08-03", amountMinor:300000 });
   const first = calculatePlan(db), second = calculatePlan(db);
   assert.equal(first.totals.committedMinor, 220000);
-  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v1");
+  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v2");
   assert.ok(first.results.householdRequirement.inputReferences.some((ref) => ref.id === "mortgage"));
   assert.deepEqual(first, second);
+});
+
+test("operating cash is derived from the highest trailing 31-day ordinary spend", () => {
+  const db = openDatabase(":memory:");
+  createAccount(db, { name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
+  const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
+  db.prepare("UPDATE accounts SET id = 'checking' WHERE id = ?").run(account.id);
+  updatePlanningAssumptions(db, { asOfDate:"2026-08-31" });
+  transaction(db, { id:"ordinary-1", categoryId:"groceries", date:"2026-07-01", amountMinor:-10000 });
+  transaction(db, { id:"ordinary-2", categoryId:"groceries", date:"2026-07-20", amountMinor:-20000 });
+  transaction(db, { id:"ordinary-3", categoryId:"groceries", date:"2026-08-25", amountMinor:-40000 });
+  transaction(db, { id:"irregular-1", categoryId:"property-taxes", date:"2026-08-26", amountMinor:-90000 });
+
+  const plan = calculatePlan(db);
+  assert.equal(plan.cash.operatingTargetMinor, 40000);
+  assert.equal(plan.results.operatingCashTarget.formulaName, "highest-observed-31-day-ordinary-spend");
+});
+
+test("annual savings requirement is calculated from cash gaps and paced sinking shortfalls", () => {
+  const db = openDatabase(":memory:");
+  updatePlanningAssumptions(db, { asOfDate:"2026-08-31", emergencyCoverageMonths:0, obligationHorizonMonths:6 });
+  createAccount(db, { name:"Obligations", type:"checking", role:"Known near-term obligations", balanceMinor:25000, balanceAsOf:"2026-08-31" });
+  createObligation(db, { name:"Property tax", dueDate:"2026-10-15", amountMinor:100000 });
+  db.prepare("UPDATE categories SET target_balance_minor = 120000, current_balance_minor = 0, next_due_date = '2028-08-30' WHERE id = 'home-maintenance'").run();
+
+  const plan = calculatePlan(db);
+  assert.equal(plan.capital.savingsRequirementMinor, 135000);
+  assert.equal(plan.results.annualSavingsRequirement.amountMinor, 135000);
+  assert.equal(plan.results.annualSavingsRequirement.formulaName, "cash-gaps-plus-deadline-paced-sinking-shortfalls");
+});
+
+test("calculated plan answers are not editable assumptions", () => {
+  const db = openDatabase(":memory:");
+  const assumptions = db.prepare("SELECT key FROM planning_assumptions ORDER BY key").all().map((row) => row.key);
+  assert.ok(!assumptions.includes("operatingCashMonths"));
+  assert.ok(!assumptions.includes("annualSavingsRequirementMinor"));
+  assert.ok(!assumptions.includes("paycheckTimingBufferMinor"));
 });
 
 test("known obligations inside the horizon increase required liquid cash", () => {

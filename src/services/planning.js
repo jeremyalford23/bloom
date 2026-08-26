@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { audit, rowToObject, rowsToObjects } from "../db.js";
 
-const FORMULA_VERSION = "planning-v1";
+const FORMULA_VERSION = "planning-v2";
 const allowedAssumptions = new Set([
-  "asOfDate", "emergencyCoverageMonths", "effectiveTaxRateBps", "operatingCashMonths",
+  "asOfDate", "emergencyCoverageMonths", "effectiveTaxRateBps",
   "essentialAverageMonths", "generalAverageMonths", "irregularHistoryMonths",
-  "obligationHorizonMonths", "investableHorizonYears", "annualSavingsRequirementMinor",
-  "paycheckTimingBufferMinor", "pretaxRetirementMinor"
+  "obligationHorizonMonths", "investableHorizonYears", "pretaxRetirementMinor"
 ]);
 
 const isoNow = () => new Date().toISOString();
@@ -106,13 +105,37 @@ export function calculatePlan(db) {
   const irregular = byId["irregular-expenses"].annualMinor;
   const household = committed + lifestyle + irregular;
   const minimumNet = committed + irregular;
-  const comfortableNet = household + assumptions.annualSavingsRequirementMinor;
   const gross = (net) => Math.round(net / Math.max(0.01, 1 - assumptions.effectiveTaxRateBps / 10000));
   const incomeFrom = addMonths(asOf, -12);
   const income = rowToObject(db.prepare(`SELECT COALESCE(SUM(CASE WHEN t.amount_minor > 0 THEN t.amount_minor ELSE 0 END), 0) amount_minor, COUNT(*) transaction_count
     FROM transactions t JOIN categories c ON c.id = t.category_id JOIN planning_groups p ON p.id = c.planning_group_id
     WHERE p.kind = 'income' AND t.is_transfer = 0 AND t.excluded = 0 AND t.posted_date > ? AND t.posted_date <= ?`).get(incomeFrom, asOf));
-  const operatingTarget = Math.round((committed + lifestyle) / 12 * assumptions.operatingCashMonths + assumptions.paycheckTimingBufferMinor);
+  const operatingFrom = addMonths(asOf, -12);
+  const operatingDays = rowsToObjects(db.prepare(`
+    WITH activity AS (
+      SELECT t.posted_date, t.amount_minor, t.category_id FROM transactions t
+      WHERE t.is_transfer = 0 AND t.excluded = 0 AND t.category_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
+      UNION ALL
+      SELECT t.posted_date, s.amount_minor, s.category_id FROM transaction_splits s
+      JOIN transactions t ON t.id = s.transaction_id WHERE t.is_transfer = 0 AND t.excluded = 0
+    )
+    SELECT a.posted_date, SUM(CASE WHEN a.amount_minor < 0 THEN -a.amount_minor ELSE 0 END) amount_minor
+    FROM activity a JOIN categories c ON c.id = a.category_id
+    WHERE a.posted_date > ? AND a.posted_date <= ?
+      AND c.planning_group_id IN ('fixed-contractual', 'essential-variable', 'lifestyle-discretionary')
+    GROUP BY a.posted_date ORDER BY a.posted_date
+  `).all(operatingFrom, asOf));
+  let operatingTarget = 0, windowStart = 0, windowTotal = 0;
+  for (let windowEnd = 0; windowEnd < operatingDays.length; windowEnd += 1) {
+    windowTotal += money(operatingDays[windowEnd].amountMinor);
+    const endTime = Date.parse(`${operatingDays[windowEnd].postedDate}T00:00:00Z`);
+    while (Date.parse(`${operatingDays[windowStart].postedDate}T00:00:00Z`) < endTime - 30 * 86400000) {
+      windowTotal -= money(operatingDays[windowStart].amountMinor);
+      windowStart += 1;
+    }
+    operatingTarget = Math.max(operatingTarget, windowTotal);
+  }
   const emergencyTarget = Math.round(committed / 12 * assumptions.emergencyCoverageMonths);
   const obligationEnd = addMonths(asOf, assumptions.obligationHorizonMonths);
   const obligations = listObligations(db).filter((item) => item.dueDate >= asOf && item.dueDate <= obligationEnd);
@@ -129,6 +152,18 @@ export function calculatePlan(db) {
   const totalHoldings = accounts.reduce((sum, item) => sum + money(item.balanceMinor), 0);
   const liquidRequirement = operatingTarget + emergencyTarget + obligationTarget;
   const cashHeld = operatingHeld + emergencyHeld + obligationHeld;
+  const operatingGap = Math.max(0, operatingTarget - operatingHeld);
+  const emergencyGap = Math.max(0, emergencyTarget - emergencyHeld);
+  const obligationGap = Math.max(0, obligationTarget - obligationHeld);
+  const asOfTime = Date.parse(`${asOf}T00:00:00Z`);
+  const annualizedSinkingRequirement = sinkingFunds.reduce((sum, item) => {
+    if (!item.shortfallMinor) return sum;
+    if (!item.nextDueDate) return sum + item.shortfallMinor;
+    const daysUntilDue = Math.max(1, (Date.parse(`${item.nextDueDate}T00:00:00Z`) - asOfTime) / 86400000);
+    return sum + Math.round(item.shortfallMinor * Math.min(1, 365 / daysUntilDue));
+  }, 0);
+  const savingsRequirement = operatingGap + emergencyGap + obligationGap + annualizedSinkingRequirement;
+  const comfortableNet = household + savingsRequirement;
   const savingsCapacity = income.amountMinor - household;
   const growthCapital = Math.max(0, totalHoldings - liquidRequirement - sinkingTarget);
   const ref = (type, id, detail) => ({ type, id, detail });
@@ -139,11 +174,12 @@ export function calculatePlan(db) {
     minimumNetIncome: result("minimum-net-income", minimumNet, "committed-plus-irregular", transactionRefs, asOf),
     minimumGrossIncome: result("minimum-gross-income", gross(minimumNet), "net-divided-by-one-minus-tax-rate", [assumptionRef("effectiveTaxRateBps")], asOf),
     sustainingGrossIncome: result("sustaining-gross-income", gross(household), "net-divided-by-one-minus-tax-rate", [assumptionRef("effectiveTaxRateBps")], asOf),
-    comfortableGrossIncome: result("comfortable-gross-income", gross(comfortableNet), "net-plus-savings-divided-by-one-minus-tax-rate", [assumptionRef("effectiveTaxRateBps"), assumptionRef("annualSavingsRequirementMinor")], asOf),
-    operatingCashTarget: result("operating-cash-target", operatingTarget, "monthly-frame-times-buffer-plus-timing", [assumptionRef("operatingCashMonths"), assumptionRef("paycheckTimingBufferMinor")], asOf),
+    comfortableGrossIncome: result("comfortable-gross-income", gross(comfortableNet), "net-plus-derived-savings-divided-by-one-minus-tax-rate", [assumptionRef("effectiveTaxRateBps"), ref("calculated-result", "annual-savings-requirement", savingsRequirement)], asOf),
+    operatingCashTarget: result("operating-cash-target", operatingTarget, "highest-observed-31-day-ordinary-spend", [ref("ordinary-spending", "trailing-12-months", operatingDays.length)], asOf),
     emergencyReserveTarget: result("emergency-reserve-target", emergencyTarget, "committed-monthly-times-coverage", [assumptionRef("emergencyCoverageMonths")], asOf),
     liquidRequirement: result("liquid-requirement", liquidRequirement, "operating-plus-emergency-plus-obligations", obligations.map((o) => ref("known-obligation", o.id, o.amountMinor)), asOf),
     savingsCapacity: result("savings-capacity", savingsCapacity, "observed-net-income-minus-household-requirement", [ref("income-transactions", "trailing-12-months", income.transactionCount)], asOf),
+    annualSavingsRequirement: result("annual-savings-requirement", savingsRequirement, "cash-gaps-plus-deadline-paced-sinking-shortfalls", [ref("cash-gap", "operating", operatingGap), ref("cash-gap", "emergency", emergencyGap), ref("cash-gap", "known-obligations", obligationGap), ref("sinking-shortfalls", "annualized", annualizedSinkingRequirement)], asOf),
     growthCapital: result("growth-capital", growthCapital, "holdings-minus-liquid-requirement-minus-sinking-targets", accounts.map((a) => ref("account-balance", a.id, a.balanceAsOf)), asOf)
   };
   return {
@@ -152,7 +188,7 @@ export function calculatePlan(db) {
     income: { observedNetMinor: income.amountMinor, transactionCount: income.transactionCount, pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
     cash: { operatingTargetMinor: operatingTarget, operatingHeldMinor: operatingHeld, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
     obligations, sinkingFunds, accounts,
-    capital: { savingsRequirementMinor: assumptions.annualSavingsRequirementMinor, savingsCapacityMinor: savingsCapacity, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
+    capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
     results
   };
 }
