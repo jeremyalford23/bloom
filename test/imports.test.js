@@ -85,6 +85,22 @@ test("bulk edits and exact split allocation persist", () => {
   assert.equal(split.splits.length, 2);
 });
 
+test("transaction filters combine date, account, category, and status", () => {
+  const { db, account } = fixture();
+  const other = createAccount(db, { name: "Savings", type: "savings" });
+  const files = [
+    { name: "checking.csv", accountId: account.id, csv: "Date,Description,Amount\n08/01/2026,Flagged Store,-10.00\n07/01/2026,Old Store,-20.00", mapping: { date:"Date", description:"Description", amount:"Amount" } },
+    { name: "savings.csv", accountId: other.id, csv: "Date,Description,Amount\n08/02/2026,Other Store,-30.00", mapping: { date:"Date", description:"Description", amount:"Amount" } }
+  ];
+  const staged = stageImport(db, { files }); commitImport(db, staged.id);
+  const flagged = listTransactions(db).rows.find((row) => row.originalDescription === "Flagged Store");
+  updateTransactions(db, [flagged.id], { categoryId:"groceries", flagged:true });
+
+  const result = listTransactions(db, { from:"2026-08-01", to:"2026-08-31", accountId:account.id, categoryId:"groceries", flagged:"true" });
+  assert.deepEqual(result.rows.map((row) => row.originalDescription), ["Flagged Store"]);
+  assert.equal(result.summary.count, 1);
+});
+
 test("manual rule runs preview safely and classify existing transactions", () => {
   const { db, account } = fixture();
   const staged = stageImport(db, { files: [{ name: "existing.csv", accountId: account.id, csv: "Date,Description,Amount\n08/01/2026,MENARDS #100,-25.00\n08/02/2026,FESTIVAL FOODS,-50.00", mapping: { date: "Date", description: "Description", amount: "Amount" } }] });
