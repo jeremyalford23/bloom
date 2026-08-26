@@ -46,8 +46,8 @@ export function budgetOverview(db, requestedMonth = currentMonth()) {
   const categories = rowsToObjects(db.prepare(
     ACTIVITY_CTE + `
     SELECT c.id, c.name, c.cadence, c.planning_group_id, p.name planning_group_name, p.kind,
-      COALESCE(SUM(CASE WHEN substr(a.posted_date, 1, 7) = ? AND a.amount_minor < 0 THEN -a.amount_minor ELSE 0 END), 0) actual_minor,
-      COALESCE(SUM(CASE WHEN a.posted_date >= ? AND a.posted_date < ? AND a.amount_minor < 0 THEN -a.amount_minor ELSE 0 END), 0) history_minor,
+      COALESCE(SUM(CASE WHEN substr(a.posted_date, 1, 7) = ? AND ((p.kind = 'income' AND a.amount_minor > 0) OR (p.kind <> 'income' AND a.amount_minor < 0)) THEN ABS(a.amount_minor) ELSE 0 END), 0) actual_minor,
+      COALESCE(SUM(CASE WHEN a.posted_date >= ? AND a.posted_date < ? AND ((p.kind = 'income' AND a.amount_minor > 0) OR (p.kind <> 'income' AND a.amount_minor < 0)) THEN ABS(a.amount_minor) ELSE 0 END), 0) history_minor,
       COUNT(DISTINCT CASE WHEN substr(a.posted_date, 1, 7) = ? THEN a.transaction_id END) transaction_count
     FROM categories c JOIN planning_groups p ON p.id = c.planning_group_id
     LEFT JOIN activity a ON a.category_id = c.id
@@ -87,6 +87,8 @@ export function budgetOverview(db, requestedMonth = currentMonth()) {
   const spendingGroups = groups.filter((group) => group.kind === "expense" && group.id !== "irregular-expenses");
   const spendingMinor = spendingGroups.reduce((total, group) => total + group.actualMinor, 0);
   const spendingBudgetMinor = spendingGroups.reduce((total, group) => total + group.budgetMinor, 0);
+  const incomeGroups = groups.filter((group) => group.kind === "income");
+  const incomeBudgetMinor = incomeGroups.reduce((total, group) => total + group.budgetMinor, 0);
   return {
     month,
     previousMonth: shiftMonth(month, -1),
@@ -97,6 +99,8 @@ export function budgetOverview(db, requestedMonth = currentMonth()) {
       spendingBudgetMinor,
       spendingDeltaMinor: spendingMinor - spendingBudgetMinor,
       incomeMinor: transactionSummary.incomeMinor,
+      incomeBudgetMinor,
+      incomeDeltaMinor: transactionSummary.incomeMinor - incomeBudgetMinor,
       savedMinor: transactionSummary.savedMinor,
       transferMinor: Math.round(transactionSummary.transferMinor / 2)
     }
@@ -113,11 +117,11 @@ export function categoryBudgetDetail(db, categoryId, requestedMonth = currentMon
   const months = Array.from({ length: 12 }, (_, index) => shiftMonth(month, index - 11));
   const historyRows = db.prepare(
     ACTIVITY_CTE + ` SELECT substr(posted_date, 1, 7) month,
-      COALESCE(SUM(CASE WHEN amount_minor < 0 THEN -amount_minor ELSE 0 END), 0) actual_minor,
+      COALESCE(SUM(CASE WHEN (? = 'income' AND amount_minor > 0) OR (? <> 'income' AND amount_minor < 0) THEN ABS(amount_minor) ELSE 0 END), 0) actual_minor,
       COUNT(DISTINCT transaction_id) transaction_count
       FROM activity WHERE category_id = ? AND posted_date >= ? AND posted_date < ?
       GROUP BY substr(posted_date, 1, 7)`
-  ).all(categoryId, months[0] + "-01", shiftMonth(month, 1) + "-01");
+  ).all(category.kind, category.kind, categoryId, months[0] + "-01", shiftMonth(month, 1) + "-01");
   const actualByMonth = new Map(historyRows.map((row) => [row.month, row]));
   category.history = months.map((historyMonth) => {
     const actual = actualByMonth.get(historyMonth);
@@ -134,15 +138,19 @@ export function categoryBudgetDetail(db, categoryId, requestedMonth = currentMon
   const average = (count) => Math.round(totals.slice(-count).reduce((sum, value) => sum + value, 0) / count);
   category.averages = { threeMonthMinor: average(3), sixMonthMinor: average(6), twelveMonthMinor: average(12) };
   category.current = category.history.at(-1);
-  category.overBudgetMonths = category.history.filter((item) => item.budgetMinor > 0 && item.actualMinor > item.budgetMinor).length;
+  category.offPlanMonths = category.history.filter((item) => item.budgetMinor > 0 && (
+    category.kind === "income" ? item.actualMinor < item.budgetMinor : item.actualMinor > item.budgetMinor
+  )).length;
+  category.overBudgetMonths = category.offPlanMonths;
   category.budgets = rowsToObjects(db.prepare(
     "SELECT * FROM budgets WHERE category_id = ? ORDER BY effective_from DESC, created_at DESC"
   ).all(categoryId));
   category.transactions = rowsToObjects(db.prepare(
     ACTIVITY_CTE + ` SELECT transaction_id id, posted_date, merchant_name, original_description,
-      -amount_minor amount_minor FROM activity WHERE category_id = ? AND substr(posted_date, 1, 7) = ?
-      AND amount_minor < 0 ORDER BY amount_minor ASC LIMIT 50`
-  ).all(categoryId, month));
+      ABS(amount_minor) amount_minor FROM activity WHERE category_id = ? AND substr(posted_date, 1, 7) = ?
+      AND ((? = 'income' AND amount_minor > 0) OR (? <> 'income' AND amount_minor < 0))
+      ORDER BY ABS(amount_minor) DESC LIMIT 50`
+  ).all(categoryId, month, category.kind, category.kind));
   return category;
 }
 

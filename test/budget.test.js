@@ -34,13 +34,30 @@ test("budget overview separates spending and income and rolls up categories", ()
   const { db } = fixture();
   createBudget(db, { categoryId: "restaurants", amountMinor: 4000, effectiveFrom: "2026-08" });
   createBudget(db, { categoryId: "groceries", amountMinor: 12000, effectiveFrom: "2026-08" });
+  createBudget(db, { categoryId: "paycheck", amountMinor: 300000, effectiveFrom: "2026-08" });
   const overview = budgetOverview(db, "2026-08");
   assert.equal(overview.summary.spendingMinor, 13000);
   assert.equal(overview.summary.spendingBudgetMinor, 16000);
   assert.equal(overview.summary.incomeMinor, 250000);
+  assert.equal(overview.summary.incomeBudgetMinor, 300000);
+  assert.equal(overview.summary.incomeDeltaMinor, -50000);
   const restaurants = overview.groups.flatMap((group) => group.categories).find((item) => item.id === "restaurants");
   assert.equal(restaurants.actualMinor, 3000);
   assert.equal(restaurants.deltaMinor, -1000);
+  const paycheck = overview.groups.flatMap((group) => group.categories).find((item) => item.id === "paycheck");
+  assert.equal(paycheck.actualMinor, 250000);
+  assert.equal(paycheck.average12Minor, Math.round(250000 / 12));
+});
+
+test("income category detail projects and reports positive income activity", () => {
+  const { db } = fixture();
+  createBudget(db, { categoryId: "paycheck", amountMinor: 300000, effectiveFrom: "2026-08" });
+  const detail = categoryBudgetDetail(db, "paycheck", "2026-08");
+  assert.equal(detail.kind, "income");
+  assert.equal(detail.current.actualMinor, 250000);
+  assert.equal(detail.current.budgetMinor, 300000);
+  assert.equal(detail.transactions.length, 1);
+  assert.equal(detail.transactions[0].amountMinor, 250000);
 });
 
 test("category detail supports adding and deleting independent budget records", () => {
