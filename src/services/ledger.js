@@ -250,6 +250,18 @@ export function updateCategory(db, id, input) {
 export function createRule(db, input) {
   if (!input.matchText?.trim()) throw new Error("Rule match text is required");
   if (!input.merchantName && !input.categoryId && !input.markTransfer) throw new Error("Rule must perform at least one action");
+  const matchType = input.matchType ?? "contains";
+  const matchText = input.matchText.trim();
+  const merchantName = input.merchantName?.trim() || null;
+  const categoryId = input.categoryId || null;
+  const markTransfer = Number(Boolean(input.markTransfer));
+  const duplicate = db.prepare(
+    `SELECT * FROM classification_rules
+     WHERE match_type = ? AND match_text = ? COLLATE NOCASE
+       AND COALESCE(merchant_name, '') = COALESCE(?, '') COLLATE NOCASE
+       AND COALESCE(category_id, '') = COALESCE(?, '') AND mark_transfer = ?`
+  ).get(matchType, matchText, merchantName, categoryId, markTransfer);
+  if (duplicate) return rowToObject(duplicate);
   const id = randomUUID();
   const now = new Date().toISOString();
   const priority = input.priority ?? (db.prepare("SELECT COALESCE(MAX(priority), 0) + 1 priority FROM classification_rules").get().priority);
@@ -257,16 +269,27 @@ export function createRule(db, input) {
     `INSERT INTO classification_rules
       (id, priority, match_type, match_text, account_id, merchant_name, category_id, mark_transfer, enabled, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-  ).run(id, priority, input.matchType ?? "contains", input.matchText.trim(), input.accountId || null,
-    input.merchantName || null, input.categoryId || null, Number(Boolean(input.markTransfer)), now, now);
+  ).run(id, priority, matchType, matchText, null, merchantName, categoryId, markTransfer, now, now);
   audit(db, "classification_rule", id, "created", input);
   return rowToObject(db.prepare("SELECT * FROM classification_rules WHERE id = ?").get(id));
 }
 
 export function listRules(db) {
   return rowsToObjects(db.prepare(
-    `SELECT r.*, a.name account_name, c.name category_name
-     FROM classification_rules r LEFT JOIN accounts a ON a.id = r.account_id
+    `SELECT r.*, c.name category_name
+     FROM classification_rules r
      LEFT JOIN categories c ON c.id = r.category_id ORDER BY r.priority, r.created_at`
   ).all());
+}
+
+export function deleteRule(db, id) {
+  const current = db.prepare("SELECT id FROM classification_rules WHERE id = ?").get(id);
+  if (!current) throw Object.assign(new Error("Rule not found"), { statusCode: 404 });
+  const remove = db.transaction(() => {
+    db.prepare("UPDATE transactions SET classification_rule_id = NULL WHERE classification_rule_id = ?").run(id);
+    db.prepare("DELETE FROM classification_rules WHERE id = ?").run(id);
+    audit(db, "classification_rule", id, "deleted", {});
+  });
+  remove();
+  return { id, deleted: true };
 }
