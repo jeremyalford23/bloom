@@ -22,6 +22,13 @@ test("CSV parser preserves quoted commas and embedded quotes", () => {
   assert.equal(result.records[0].Description, 'Store, Inc. "East"');
 });
 
+test("Fidelity exports tolerate a BOM and leading blank line", () => {
+  const result = csvObjects('\uFEFF\nRun Date,Action,Symbol,Description,Type,Amount ($)\n08/26/2026,DIRECT DEPOSIT WAL-MART ASSPAYROLL (Cash),,No Description,Cash,1223.22\n');
+  assert.deepEqual(result.headers, ["Run Date", "Action", "Symbol", "Description", "Type", "Amount ($)"]);
+  assert.equal(result.records[0]["Action"], "DIRECT DEPOSIT WAL-MART ASSPAYROLL (Cash)");
+  assert.equal(result.records[0]["Amount ($)"], "1223.22");
+});
+
 test("separate debit and credit columns determine direction regardless of embedded signs", () => {
   const { db, account } = fixture();
   const csv = `Date,Description,Debit,Credit
