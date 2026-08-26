@@ -16,10 +16,10 @@ function matches(rule, description) {
   return source.includes(target);
 }
 
-export function matchingRule(db, accountId, description) {
+export function matchingRule(db, _accountId, description) {
   const rules = db.prepare(
-    "SELECT * FROM classification_rules WHERE enabled = 1 AND (account_id IS NULL OR account_id = ?) ORDER BY priority, created_at"
-  ).all(accountId);
+    "SELECT * FROM classification_rules WHERE enabled = 1 ORDER BY priority, created_at"
+  ).all();
   const rule = rules.find((candidate) => matches(candidate, description));
   return rule ? {
     id: rule.id,

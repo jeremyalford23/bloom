@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { openDatabase } from "../src/db.js";
 import { commitImport, csvObjects, stageImport } from "../src/services/imports.js";
-import { createAccount, createRule, listTransactions, replaceSplits, updateTransactions } from "../src/services/ledger.js";
+import { createAccount, createRule, deleteRule, listRules, listTransactions, replaceSplits, updateTransactions } from "../src/services/ledger.js";
 import { runRules } from "../src/services/rules.js";
 
 const sampleCsv = `Date,Description,Amount,Notes
@@ -112,7 +112,7 @@ test("manual rule runs preserve manual classifications by default", () => {
   assert.equal(listTransactions(db).rows[0].categoryId, "home-maintenance");
 });
 
-test("rules accept empty optional scope and action fields from browser forms", () => {
+test("rules ignore account scope, prevent duplicates, and can be deleted", () => {
   const { db } = fixture();
   const rule = createRule(db, {
     matchType: "contains",
@@ -125,4 +125,19 @@ test("rules accept empty optional scope and action fields from browser forms", (
   assert.equal(rule.accountId, null);
   assert.equal(rule.categoryId, null);
   assert.equal(rule.markTransfer, 1);
+  const duplicate = createRule(db, { matchType: "contains", matchText: "payment", markTransfer: true });
+  assert.equal(duplicate.id, rule.id);
+  assert.equal(listRules(db).length, 1);
+  assert.deepEqual(deleteRule(db, rule.id), { id: rule.id, deleted: true });
+  assert.equal(listRules(db).length, 0);
+});
+
+test("account-scoped legacy rules match transactions in every account", () => {
+  const { db, account } = fixture();
+  const other = createAccount(db, { name: "Other Checking", type: "checking" });
+  const rule = createRule(db, { matchText: "COFFEE", categoryId: "groceries" });
+  db.prepare("UPDATE classification_rules SET account_id = ? WHERE id = ?").run(account.id, rule.id);
+  const staged = stageImport(db, { files: [{ name: "other.csv", accountId: other.id, csv: "Date,Description,Amount\n08/01/2026,COFFEE SHOP,-5.00", mapping: { date: "Date", description: "Description", amount: "Amount" } }] });
+  commitImport(db, staged.id);
+  assert.equal(listTransactions(db).rows[0].categoryId, "groceries");
 });

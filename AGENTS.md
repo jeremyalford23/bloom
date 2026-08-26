@@ -23,7 +23,7 @@ If Git’s state genuinely prevents a safe PR, explain it before spending time f
 
 ## App preview
 
-## User is viewing the Bloom app at http://100.114.213.81:8712/. This is a Tailscale address.
+User is viewing the Bloom app at http://192.168.12.236:3002. This is a Tailscale address.
 
 ## Versioning
 

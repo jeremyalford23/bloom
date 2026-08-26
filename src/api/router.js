@@ -4,7 +4,7 @@ import { validateTaxonomy } from "../domain/validation.js";
 import { rowToObject, rowsToObjects } from "../db.js";
 import { commitImport, importDetail, importHistory, resolveImportRecord, stageImport } from "../services/imports.js";
 import {
-  createAccount, createCategory, createRule, deleteCategory, getTransaction, listAccounts, listCategories, listRules,
+  createAccount, createCategory, createRule, deleteCategory, deleteRule, getTransaction, listAccounts, listCategories, listRules,
   listTransactions, pairTransfers, replaceSplits, updateAccount, updateCategory, updateTransactions
 } from "../services/ledger.js";
 import { runRules } from "../services/rules.js";
@@ -78,6 +78,7 @@ export async function handleApi(request, response, url, db) {
   if ((params = matchPath(pathname, "/api/categories/:id")) && method === "DELETE") { sendJson(response, 200, deleteCategory(db, params.id)); return true; }
   if (method === "GET" && pathname === "/api/rules") { sendJson(response, 200, listRules(db)); return true; }
   if (method === "POST" && pathname === "/api/rules") { sendJson(response, 201, createRule(db, await readJson(request))); return true; }
+  if ((params = matchPath(pathname, "/api/rules/:id")) && method === "DELETE") { sendJson(response, 200, deleteRule(db, params.id)); return true; }
   if (method === "POST" && pathname === "/api/rules/run") { sendJson(response, 200, runRules(db, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/transactions") { sendJson(response, 200, listTransactions(db, Object.fromEntries(url.searchParams))); return true; }
   if (method === "PATCH" && pathname === "/api/transactions") { const body = await readJson(request); sendJson(response, 200, updateTransactions(db, body.ids, body.changes ?? {})); return true; }

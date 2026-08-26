@@ -55,6 +55,21 @@ test("category API creates and deletes a new budget category", () => withServer(
   assert.deepEqual(await deletedResponse.json(), { id: created.id, deleted: true });
 }));
 
+test("rule API creates and deletes a global rule", () => withServer(async (baseUrl) => {
+  const createdResponse = await fetch(`${baseUrl}/api/rules`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ matchText: "COFFEE", categoryId: "groceries" })
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 201);
+  assert.equal(created.accountId, null);
+
+  const deletedResponse = await fetch(`${baseUrl}/api/rules/${created.id}`, { method: "DELETE" });
+  assert.equal(deletedResponse.status, 200);
+  assert.deepEqual(await deletedResponse.json(), { id: created.id, deleted: true });
+}));
+
 test("budget modal scopes values and prevents duplicate saves", async () => {
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(appSource, /new FormData\(modalNode\.querySelector\("#new-budget-form"\)\)/);
