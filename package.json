@@ -1,6 +1,6 @@
 {
   "name": "bloom-finance",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "private": true,
   "description": "A private household financial decision engine.",
   "type": "module",

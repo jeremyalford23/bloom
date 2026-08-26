@@ -1,6 +1,7 @@
 const app = document.querySelector("#app");
 const toastBox = document.querySelector("#toast");
-const state = { route: location.hash.slice(1) || "home", accounts: [], categories: [], selected: new Set(), files: [], staged: null };
+const state = { route: location.hash.slice(1) || "home", accounts: [], categories: [], selected: new Set(), files: [], staged: null,
+  transactionFilters: { search:"", dateRange:"all", from:"", to:"", accountId:"", categoryId:"", status:"" } };
 
 const esc = (value = "") => String(value).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" })[c]);
 const cash = (minor, currency = "USD") => new Intl.NumberFormat("en-US", { style:"currency", currency }).format(Number(minor || 0) / 100);
@@ -40,7 +41,7 @@ function common() {
 
 async function home() {
   const o = await request("/api/overview");
-  app.innerHTML = shell('<main class="landing"><section class="landing-copy"><p class="eyebrow">PHASE 3 · LIVING PLAN</p><h1>Your household ledger,<br><em>ready for decisions.</em></h1><p>Turn normalized activity, budgets, balances, and explicit assumptions into traceable household requirements.</p><div class="toolbar" style="margin-top:28px"><a class="button primary" href="#plan">Open the plan</a><a class="button" href="#transactions">Review transactions</a></div></section><section class="landing-side"><article><h3>' + Number(o.transactionCount).toLocaleString() + ' transactions</h3><p>' + Number(o.reviewCount || 0) + ' need categorization.</p></article><article><h3>' + o.accountCount + ' accounts</h3><p>Balances and planning roles stay explicit.</p></article><article><h3>' + o.ruleCount + ' rules</h3><p>Cleanup and categorization run on imports.</p></article><article><h3>Source evidence retained</h3><p>Every planning result names its formula and inputs.</p></article></section></main>', "API 0.5.5 · " + o.transactionCount + " records");
+  app.innerHTML = shell('<main class="landing"><section class="landing-copy"><p class="eyebrow">PHASE 3 · LIVING PLAN</p><h1>Your household ledger,<br><em>ready for decisions.</em></h1><p>Turn normalized activity, budgets, balances, and explicit assumptions into traceable household requirements.</p><div class="toolbar" style="margin-top:28px"><a class="button primary" href="#plan">Open the plan</a><a class="button" href="#transactions">Review transactions</a></div></section><section class="landing-side"><article><h3>' + Number(o.transactionCount).toLocaleString() + ' transactions</h3><p>' + Number(o.reviewCount || 0) + ' need categorization.</p></article><article><h3>' + o.accountCount + ' accounts</h3><p>Balances and planning roles stay explicit.</p></article><article><h3>' + o.ruleCount + ' rules</h3><p>Cleanup and categorization run on imports.</p></article><article><h3>Source evidence retained</h3><p>Every planning result names its formula and inputs.</p></article></section></main>', "API 0.5.6 · " + o.transactionCount + " records");
   common();
 }
 
@@ -53,13 +54,47 @@ function bindTransactionRows() {
   document.querySelectorAll(".tx-check").forEach((box) => box.addEventListener("change", () => { box.checked ? state.selected.add(box.value) : state.selected.delete(box.value); render(); }));
   document.querySelectorAll(".tx-open").forEach((b) => b.addEventListener("click", () => openTransaction(b.dataset.id)));
 }
+function isoDate(value) {
+  const year = value.getFullYear(), month = String(value.getMonth() + 1).padStart(2,"0"), day = String(value.getDate()).padStart(2,"0");
+  return `${year}-${month}-${day}`;
+}
+function transactionDateBounds(range) {
+  const today = new Date(), year = today.getFullYear(), month = today.getMonth();
+  if (range === "this-month") return { from:isoDate(new Date(year,month,1)), to:isoDate(today) };
+  if (range === "last-month") return { from:isoDate(new Date(year,month-1,1)), to:isoDate(new Date(year,month,0)) };
+  if (range === "ytd") return { from:`${year}-01-01`, to:isoDate(today) };
+  return { from:"", to:"" };
+}
+function transactionFilterQuery() {
+  const filters = state.transactionFilters, params = new URLSearchParams({ limit:"250" });
+  if (filters.search.trim()) params.set("search",filters.search.trim());
+  const dates = filters.dateRange === "custom" ? { from:filters.from, to:filters.to } : transactionDateBounds(filters.dateRange);
+  if (dates.from) params.set("from",dates.from); if (dates.to) params.set("to",dates.to);
+  if (filters.accountId) params.set("accountId",filters.accountId);
+  if (filters.categoryId) params.set("categoryId",filters.categoryId);
+  if (filters.status === "flagged") params.set("flagged","true");
+  if (filters.status === "transfers") params.set("transfers","true");
+  if (filters.status === "uncategorized") params.set("categoryId","uncategorized");
+  return params;
+}
 async function transactions() {
-  const result = await request("/api/transactions?limit=250");
+  const filters = state.transactionFilters, result = await request("/api/transactions?" + transactionFilterQuery());
   const bulk = state.selected.size ? '<div class="bulk"><strong>' + state.selected.size + ' selected</strong><select id="bulk-category" style="max-width:220px">' + categoryOptions() + '</select><button class="button primary" id="bulk-save">Set category</button><button class="button" id="bulk-transfer">Mark transfer</button><button class="button" id="bulk-flag">Flag</button></div>' : "";
-  app.innerHTML = shell('<main class="page"><div class="toolbar"><div class="search"><input id="search" type="search" autocomplete="off" aria-label="Search transactions" placeholder="merchant, memo, amount, notes"></div><button class="button" data-action="history">Import history</button><button class="button primary" data-action="import">Import CSV</button></div>' + bulk + '<section id="transaction-results" class="panel ' + (bulk ? "table-panel with-bulk" : "") + '" aria-live="polite">' + transactionContent(result) + '</section></main>', result.summary.count + " records · " + Number(result.summary.uncategorizedCount || 0) + " need review");
+  const accountFilters = '<option value="">All accounts</option>' + state.accounts.map((a) => '<option value="' + a.id + '" ' + (filters.accountId === a.id ? "selected" : "") + '>' + esc(a.name) + (a.lastFour ? " ···" + esc(a.lastFour) : "") + '</option>').join("");
+  const categoryFilters = '<option value="">All categories</option>' + state.categories.filter((c) => c.active).map((c) => '<option value="' + c.id + '" ' + (filters.categoryId === c.id ? "selected" : "") + '>' + esc(c.name) + '</option>').join("");
+  const customDates = '<div class="custom-dates ' + (filters.dateRange === "custom" ? "visible" : "") + '" id="custom-dates"><label><span>FROM</span><input id="filter-from" type="date" value="' + esc(filters.from) + '"></label><label><span>TO</span><input id="filter-to" type="date" value="' + esc(filters.to) + '"></label></div>';
+  app.innerHTML = shell('<main class="page"><div class="toolbar"><div class="search"><input id="search" type="search" autocomplete="off" aria-label="Search transactions" placeholder="merchant, memo, amount, notes" value="' + esc(filters.search) + '"></div><button class="button" data-action="history">Import history</button><button class="button primary" data-action="import">Import CSV</button></div><div class="transaction-filters" aria-label="Transaction filters"><label><span>DATE</span><select id="filter-date"><option value="all">All time</option><option value="this-month" ' + (filters.dateRange === "this-month" ? "selected" : "") + '>This month</option><option value="last-month" ' + (filters.dateRange === "last-month" ? "selected" : "") + '>Last month</option><option value="ytd" ' + (filters.dateRange === "ytd" ? "selected" : "") + '>Year to date</option><option value="custom" ' + (filters.dateRange === "custom" ? "selected" : "") + '>Custom</option></select></label>' + customDates + '<label><span>ACCOUNT</span><select id="filter-account">' + accountFilters + '</select></label><label><span>CATEGORY</span><select id="filter-category">' + categoryFilters + '</select></label><label><span>STATUS</span><select id="filter-status"><option value="">Any status</option><option value="uncategorized" ' + (filters.status === "uncategorized" ? "selected" : "") + '>Needs review</option><option value="flagged" ' + (filters.status === "flagged" ? "selected" : "") + '>Flagged</option><option value="transfers" ' + (filters.status === "transfers" ? "selected" : "") + '>Transfers</option></select></label><button class="button link clear-filters" id="clear-filters">Clear filters</button></div>' + bulk + '<section id="transaction-results" class="panel ' + (bulk ? "table-panel with-bulk" : "") + '" aria-live="polite">' + transactionContent(result, transactionFilterQuery().toString() !== "limit=250") + '</section></main>', result.summary.count + " records · " + Number(result.summary.uncategorizedCount || 0) + " need review");
   common();
   const search = document.querySelector("#search"); let searchTimer, searchRequest = 0;
-  search?.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(async () => { const requestId = ++searchRequest, term = search.value.trim(); try { const q = await request("/api/transactions?limit=250&search=" + encodeURIComponent(term)); if (requestId !== searchRequest) return; document.querySelector("#transaction-results").innerHTML = transactionContent(q, Boolean(term)); document.querySelector(".nav-meta").textContent = q.summary.count + (term ? " matches" : " records · " + Number(q.summary.uncategorizedCount || 0) + " need review"); bindTransactionRows(); document.querySelector('#transaction-results [data-action="import"]')?.addEventListener("click", openImport); } catch (error) { if (requestId === searchRequest) toast(error.message); } }, 200); });
+  const refreshResults = async () => { const requestId = ++searchRequest; try { const query = transactionFilterQuery(), q = await request("/api/transactions?" + query); if (requestId !== searchRequest) return; document.querySelector("#transaction-results").innerHTML = transactionContent(q, query.toString() !== "limit=250"); document.querySelector(".nav-meta").textContent = q.summary.count + " matches"; bindTransactionRows(); document.querySelector('#transaction-results [data-action="import"]')?.addEventListener("click", openImport); } catch (error) { if (requestId === searchRequest) toast(error.message); } };
+  search?.addEventListener("input", () => { state.transactionFilters.search = search.value; clearTimeout(searchTimer); searchTimer = setTimeout(refreshResults,200); });
+  document.querySelector("#filter-date").addEventListener("change", (event) => { filters.dateRange = event.target.value; document.querySelector("#custom-dates").classList.toggle("visible",filters.dateRange === "custom"); if (filters.dateRange !== "custom") refreshResults(); });
+  document.querySelector("#filter-account").addEventListener("change", (event) => { filters.accountId = event.target.value; refreshResults(); });
+  document.querySelector("#filter-category").addEventListener("change", (event) => { filters.categoryId = event.target.value; refreshResults(); });
+  document.querySelector("#filter-status").addEventListener("change", (event) => { filters.status = event.target.value; refreshResults(); });
+  document.querySelector("#filter-from").addEventListener("change", (event) => { filters.from = event.target.value; refreshResults(); });
+  document.querySelector("#filter-to").addEventListener("change", (event) => { filters.to = event.target.value; refreshResults(); });
+  document.querySelector("#clear-filters").addEventListener("click", () => { state.transactionFilters = { search:"", dateRange:"all", from:"", to:"", accountId:"", categoryId:"", status:"" }; transactions(); });
   bindTransactionRows();
   document.querySelector("#bulk-save")?.addEventListener("click", () => bulkUpdate({ categoryId:document.querySelector("#bulk-category").value }));
   document.querySelector("#bulk-transfer")?.addEventListener("click", () => bulkUpdate({ isTransfer:true }));
