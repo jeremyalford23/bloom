@@ -38,3 +38,16 @@ test("known obligations inside the horizon increase required liquid cash", () =>
   assert.equal(plan.obligations.length, 1);
   assert.ok(plan.results.liquidRequirement.inputReferences.some((ref) => ref.type === "known-obligation"));
 });
+
+test("credit card balances reduce holdings regardless of their stored sign", () => {
+  const db = openDatabase(":memory:");
+  createAccount(db, { name:"Checking", type:"checking", role:"Operating cash", balanceMinor:1000000, balanceAsOf:"2026-08-31" });
+  createAccount(db, { name:"Positive card", type:"credit-card", role:"Spending · paid in full", balanceMinor:509700, balanceAsOf:"2026-08-31" });
+  createAccount(db, { name:"Negative card", type:"credit-card", role:"Spending · paid in full", balanceMinor:-10000, balanceAsOf:"2026-08-31" });
+
+  const plan = calculatePlan(db);
+  assert.equal(plan.capital.totalHoldingsMinor, 480300);
+  assert.equal(plan.accounts.find((account) => account.name === "Checking").balanceMinor, 1000000);
+  assert.equal(plan.accounts.find((account) => account.name === "Positive card").balanceMinor, -509700);
+  assert.equal(plan.accounts.find((account) => account.name === "Negative card").balanceMinor, -10000);
+});

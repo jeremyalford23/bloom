@@ -16,6 +16,9 @@ const addMonths = (date, offset) => {
   return value.toISOString().slice(0, 10);
 };
 const money = (value) => Math.round(Number(value) || 0);
+const planningBalance = (account) => account.type?.toLowerCase() === "credit-card"
+  ? -Math.abs(money(account.balanceMinor))
+  : money(account.balanceMinor);
 const result = (type, amountMinor, formula, inputs, asOfDate) => ({
   resultType: type, amountMinor: money(amountMinor), currency: "USD", formulaName: formula,
   formulaVersion: FORMULA_VERSION, inputReferences: inputs, asOfDate
@@ -114,7 +117,8 @@ export function calculatePlan(db) {
   const obligationEnd = addMonths(asOf, assumptions.obligationHorizonMonths);
   const obligations = listObligations(db).filter((item) => item.dueDate >= asOf && item.dueDate <= obligationEnd);
   const obligationTarget = obligations.reduce((sum, item) => sum + item.amountMinor, 0);
-  const accounts = rowsToObjects(db.prepare("SELECT * FROM accounts ORDER BY name").all());
+  const accounts = rowsToObjects(db.prepare("SELECT * FROM accounts ORDER BY name").all())
+    .map((account) => ({ ...account, balanceMinor: planningBalance(account) }));
   const role = (needle) => accounts.filter((a) => a.role.toLowerCase().includes(needle)).reduce((sum, a) => sum + money(a.balanceMinor), 0);
   const operatingHeld = role("operating cash"), emergencyHeld = role("emergency reserve"), obligationHeld = role("known");
   const sinkingFunds = rowsToObjects(db.prepare(`SELECT id, name, target_balance_minor, current_balance_minor, annual_expected_minor, next_due_date
