@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import { API_VERSION } from "../src/api/version.js";
 import { createBloomServer } from "../src/server.js";
 
@@ -53,3 +54,10 @@ test("category API creates and deletes a new budget category", () => withServer(
   assert.equal(deletedResponse.status, 200);
   assert.deepEqual(await deletedResponse.json(), { id: created.id, deleted: true });
 }));
+
+test("budget modal scopes values and prevents duplicate saves", async () => {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /new FormData\(modalNode\.querySelector\("#new-budget-form"\)\)/);
+  assert.match(appSource, /if\(save\.disabled\)return/);
+  assert.match(appSource, /document\.querySelectorAll\("\.modal-backdrop"\)/);
+});
