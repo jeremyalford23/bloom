@@ -12,6 +12,7 @@ import {
   budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget,
   getBudgetSettings, irregularExpenses, recurringExpenses, updateBudgetSettings
 } from "../services/budget.js";
+import { calculatePlan, createObligation, deleteObligation, getPlanningAssumptions, listObligations, updatePlanningAssumptions } from "../services/planning.js";
 
 export function sendJson(response, status, body) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -74,6 +75,12 @@ export async function handleApi(request, response, url, db) {
   if (method === "POST" && pathname === "/api/recurring/decision") { sendJson(response, 200, decideRecurring(db, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/irregular") { sendJson(response, 200, irregularExpenses(db, Number(url.searchParams.get("year")) || undefined)); return true; }
   if (method === "GET" && pathname === "/api/planning-groups") { sendJson(response, 200, rowsToObjects(db.prepare("SELECT * FROM planning_groups ORDER BY name").all())); return true; }
+  if (method === "GET" && pathname === "/api/plan") { sendJson(response, 200, calculatePlan(db)); return true; }
+  if (method === "GET" && pathname === "/api/plan/assumptions") { sendJson(response, 200, getPlanningAssumptions(db)); return true; }
+  if (method === "PATCH" && pathname === "/api/plan/assumptions") { sendJson(response, 200, updatePlanningAssumptions(db, await readJson(request))); return true; }
+  if (method === "GET" && pathname === "/api/plan/obligations") { sendJson(response, 200, listObligations(db)); return true; }
+  if (method === "POST" && pathname === "/api/plan/obligations") { sendJson(response, 201, createObligation(db, await readJson(request))); return true; }
+  if ((params = matchPath(pathname, "/api/plan/obligations/:id")) && method === "DELETE") { sendJson(response, 200, deleteObligation(db, params.id)); return true; }
   if ((params = matchPath(pathname, "/api/categories/:id")) && method === "PATCH") { sendJson(response, 200, updateCategory(db, params.id, await readJson(request))); return true; }
   if ((params = matchPath(pathname, "/api/categories/:id")) && method === "DELETE") { sendJson(response, 200, deleteCategory(db, params.id)); return true; }
   if (method === "GET" && pathname === "/api/rules") { sendJson(response, 200, listRules(db)); return true; }
