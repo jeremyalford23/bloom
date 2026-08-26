@@ -20,7 +20,10 @@ test("index is reachable", () => withServer(async (baseUrl) => {
   const response = await fetch(baseUrl);
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /text\/html/);
-  assert.match(await response.text(), /Household Financial Decision Engine/i);
+  const html = await response.text();
+  assert.match(html, /Household Financial Decision Engine/i);
+  assert.ok(html.includes(`/app.js?v=${API_VERSION}`));
+  assert.ok(html.includes(`/styles.css?v=${API_VERSION}`));
 }));
 
 test("health endpoint reports version and taxonomy readiness", () => withServer(async (baseUrl) => {
@@ -75,4 +78,35 @@ test("budget modal scopes values and prevents duplicate saves", async () => {
   assert.match(appSource, /new FormData\(modalNode\.querySelector\("#new-budget-form"\)\)/);
   assert.match(appSource, /if\(save\.disabled\)return/);
   assert.match(appSource, /document\.querySelectorAll\("\.modal-backdrop"\)/);
+});
+
+test("account roles include income and modals stack above the transaction drawer", async () => {
+  const [appSource, styles] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8")
+  ]);
+  assert.match(appSource, /accountRoles = \[[^\]]*"Income"/);
+  assert.match(appSource, /b\.onclick=\(\)=>node\.remove\(\)/);
+  assert.match(styles, /\.modal-backdrop \{[^}]*z-index:30/);
+  assert.match(styles, /\.drawer \{[^}]*z-index:22/);
+});
+
+test("account rows are editable and split rows can be added or removed", async () => {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /class="account-row"/);
+  assert.match(appSource, /class="account-field"/);
+  assert.match(appSource, /field\.replaceWith\(editor\)/);
+  assert.match(appSource, /class="button primary save-account"/);
+  assert.match(appSource, /method:"PATCH"/);
+  assert.match(appSource, /id="add-split"/);
+  assert.match(appSource, /class="button danger delete-split"/);
+  assert.match(appSource, /t\.splits\?\.length >= 2/);
+});
+
+test("transaction category filter contains grouped choices and live search", async () => {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /class="category-menu"/);
+  assert.match(appSource, /class="category-group-label"/);
+  assert.match(appSource, /id="filter-category-search"/);
+  assert.match(appSource, /groupedCategoryChoices\(filters\.categoryId,filters\.categorySearch\)/);
 });
