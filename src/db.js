@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { PLANNING_GROUPS, SEED_CATEGORIES } from "./domain/taxonomy.js";
 
 const SCHEMA = `
@@ -191,6 +191,7 @@ export function openDatabase(path = process.env.BLOOM_DB_PATH ?? "data/bloom.db"
   };
   db.exec(SCHEMA);
   migrateSchema(db);
+  repairSplitColumnCreditSigns(db);
   seedTaxonomy(db);
   return db;
 }
@@ -228,6 +229,64 @@ function migrateSchema(db) {
   setting.run("rollover", JSON.stringify(false), now);
   setting.run("averageWindow", JSON.stringify(12), now);
   setting.run("annualView", JSON.stringify("derived"), now);
+}
+
+function repairSplitColumnCreditSigns(db) {
+  const records = db.prepare(
+    `SELECT r.id, r.account_id, r.posted_date, r.description, r.amount_minor,
+            r.raw_json, f.mapping_json, t.id transaction_id
+     FROM raw_import_records r
+     JOIN import_files f ON f.id = r.import_file_id
+     LEFT JOIN transactions t ON t.raw_import_record_id = r.id`
+  ).all();
+  const updateRecord = db.prepare("UPDATE raw_import_records SET amount_minor = ?, fingerprint = ? WHERE id = ?");
+  const updateTransaction = db.prepare(
+    "UPDATE transactions SET amount_minor = ?, fingerprint = ?, updated_at = ? WHERE id = ?"
+  );
+  const updateSplits = db.prepare("UPDATE transaction_splits SET amount_minor = -amount_minor WHERE transaction_id = ?");
+
+  const repair = db.transaction(() => {
+    for (const record of records) {
+      let mapping;
+      let raw;
+      try {
+        mapping = JSON.parse(record.mapping_json);
+        raw = JSON.parse(record.raw_json);
+      } catch {
+        continue;
+      }
+      if (mapping.amount || !mapping.credit) continue;
+      const creditText = String(raw[mapping.credit] ?? "").trim();
+      if (!creditText) continue;
+      const creditMinor = parseMigrationMoney(creditText);
+      if (creditMinor === null) continue;
+      let correctedAmount = Math.abs(creditMinor);
+      if (mapping.amountSign === "flip") correctedAmount *= -1;
+      if (record.amount_minor === correctedAmount) continue;
+
+      const correctedFingerprint = createHash("sha256")
+        .update([record.account_id, record.posted_date, correctedAmount, record.description.trim().toUpperCase()].join("|"))
+        .digest("hex");
+      updateRecord.run(correctedAmount, correctedFingerprint, record.id);
+      if (record.transaction_id) {
+        updateTransaction.run(correctedAmount, correctedFingerprint, new Date().toISOString(), record.transaction_id);
+        updateSplits.run(record.transaction_id);
+      }
+    }
+  });
+  repair();
+}
+
+function parseMigrationMoney(value) {
+  const input = String(value ?? "").trim();
+  if (!input) return null;
+  const negative = /^\(.*\)$/.test(input) || /^-/.test(input);
+  const cleaned = input.replace(/[()$€£,\s+\-]/g, "");
+  if (!/^\d+(\.\d{0,2})?$/.test(cleaned)) return null;
+  const [whole, fraction = ""] = cleaned.split(".");
+  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (!Number.isSafeInteger(minor)) return null;
+  return negative ? -minor : minor;
 }
 
 function seedTaxonomy(db) {

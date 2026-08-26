@@ -22,6 +22,22 @@ test("CSV parser preserves quoted commas and embedded quotes", () => {
   assert.equal(result.records[0].Description, 'Store, Inc. "East"');
 });
 
+test("separate debit and credit columns determine direction regardless of embedded signs", () => {
+  const { db, account } = fixture();
+  const csv = `Date,Description,Debit,Credit
+08/11/2026,MINT MOBILE,360.00,
+08/15/2026,MINT MOBILE,,-360.00
+08/18/2026,ACE HARDWARE,,70.39`;
+  const staged = stageImport(db, {
+    files: [{
+      name: "credit-card.csv", accountId: account.id, csv,
+      mapping: { date: "Date", description: "Description", amount: "", debit: "Debit", credit: "Credit" }
+    }]
+  });
+
+  assert.deepEqual(staged.preview.map((row) => row.amountMinor), [-36000, 36000, 7039]);
+});
+
 test("import stages, applies rules, commits, and remains idempotent", () => {
   const { db, account } = fixture();
   createRule(db, { matchType: "starts-with", matchText: "MENARDS", merchantName: "Menards", categoryId: "home-maintenance" });
