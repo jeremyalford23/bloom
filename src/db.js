@@ -167,11 +167,30 @@ CREATE TABLE IF NOT EXISTS recurring_items (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS planning_assumptions (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS known_obligations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  due_date TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  account_id TEXT REFERENCES accounts(id),
+  funded INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_transactions_posted ON transactions(posted_date DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
 CREATE INDEX IF NOT EXISTS idx_raw_import_run ON raw_import_records(import_run_id);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(entity_type, entity_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_budgets_category_date ON budgets(category_id, effective_from);
+CREATE INDEX IF NOT EXISTS idx_obligations_due ON known_obligations(due_date);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_merchant_cadence ON recurring_items(merchant_name, cadence);
 `;
 
@@ -229,6 +248,22 @@ function migrateSchema(db) {
   setting.run("rollover", JSON.stringify(false), now);
   setting.run("averageWindow", JSON.stringify(12), now);
   setting.run("annualView", JSON.stringify("derived"), now);
+  const assumption = db.prepare(
+    "INSERT OR IGNORE INTO planning_assumptions (key, value_json, unit, rationale, updated_at) VALUES (?, ?, ?, ?, ?)"
+  );
+  const today = new Date().toISOString().slice(0, 10);
+  assumption.run("asOfDate", JSON.stringify(today), "date", "Anchors every trailing window and obligation horizon.", now);
+  assumption.run("emergencyCoverageMonths", JSON.stringify(6), "months", "Months of committed spending held for an income shock.", now);
+  assumption.run("effectiveTaxRateBps", JSON.stringify(2200), "basis-points", "Effective rate used only to express net requirements in gross terms.", now);
+  assumption.run("operatingCashMonths", JSON.stringify(1.5), "months", "Monthly-frame spending kept available for normal timing needs.", now);
+  assumption.run("essentialAverageMonths", JSON.stringify(6), "months", "Trailing window for essential variable categories.", now);
+  assumption.run("generalAverageMonths", JSON.stringify(12), "months", "Trailing window for fixed and lifestyle categories.", now);
+  assumption.run("irregularHistoryMonths", JSON.stringify(48), "months", "History window used when an irregular annual target is not supplied.", now);
+  assumption.run("obligationHorizonMonths", JSON.stringify(6), "months", "Near-term window for known dated obligations.", now);
+  assumption.run("investableHorizonYears", JSON.stringify(3), "years", "Sinking funds due sooner remain liquid.", now);
+  assumption.run("annualSavingsRequirementMinor", JSON.stringify(0), "minor-currency", "After-tax annual saving required for reserve gaps and growth.", now);
+  assumption.run("paycheckTimingBufferMinor", JSON.stringify(0), "minor-currency", "Extra operating cash for pay-cycle timing.", now);
+  assumption.run("pretaxRetirementMinor", JSON.stringify(0), "minor-currency", "Observed annual pre-tax retirement saving, shown separately.", now);
 }
 
 function repairSplitColumnCreditSigns(db) {
