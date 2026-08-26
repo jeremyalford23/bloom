@@ -103,7 +103,10 @@ function normalizeRecord(record, mapping) {
   } else {
     const debit = parseMoney(record[mapping.debit]);
     const credit = parseMoney(record[mapping.credit]);
-    if (debit !== null || credit !== null) amountMinor = (credit ?? 0) - Math.abs(debit ?? 0);
+    // Separate debit/credit columns already encode direction. Some institutions
+    // also prefix credit values with a minus sign, so only their magnitudes
+    // should participate in normalization.
+    if (debit !== null || credit !== null) amountMinor = Math.abs(credit ?? 0) - Math.abs(debit ?? 0);
   }
   if (amountMinor !== null && mapping.amountSign === "flip") amountMinor *= -1;
 
