@@ -255,15 +255,13 @@ function migrateSchema(db) {
   assumption.run("asOfDate", JSON.stringify(today), "date", "Anchors every trailing window and obligation horizon.", now);
   assumption.run("emergencyCoverageMonths", JSON.stringify(6), "months", "Months of committed spending held for an income shock.", now);
   assumption.run("effectiveTaxRateBps", JSON.stringify(2200), "basis-points", "Effective rate used only to express net requirements in gross terms.", now);
-  assumption.run("operatingCashMonths", JSON.stringify(1.5), "months", "Monthly-frame spending kept available for normal timing needs.", now);
   assumption.run("essentialAverageMonths", JSON.stringify(6), "months", "Trailing window for essential variable categories.", now);
   assumption.run("generalAverageMonths", JSON.stringify(12), "months", "Trailing window for fixed and lifestyle categories.", now);
   assumption.run("irregularHistoryMonths", JSON.stringify(48), "months", "History window used when an irregular annual target is not supplied.", now);
   assumption.run("obligationHorizonMonths", JSON.stringify(6), "months", "Near-term window for known dated obligations.", now);
   assumption.run("investableHorizonYears", JSON.stringify(3), "years", "Sinking funds due sooner remain liquid.", now);
-  assumption.run("annualSavingsRequirementMinor", JSON.stringify(0), "minor-currency", "After-tax annual saving required for reserve gaps and growth.", now);
-  assumption.run("paycheckTimingBufferMinor", JSON.stringify(0), "minor-currency", "Extra operating cash for pay-cycle timing.", now);
   assumption.run("pretaxRetirementMinor", JSON.stringify(0), "minor-currency", "Observed annual pre-tax retirement saving, shown separately.", now);
+  db.prepare("DELETE FROM planning_assumptions WHERE key IN ('operatingCashMonths', 'annualSavingsRequirementMinor', 'paycheckTimingBufferMinor')").run();
 }
 
 function repairSplitColumnCreditSigns(db) {
