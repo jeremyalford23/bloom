@@ -76,3 +76,14 @@ test("budget modal scopes values and prevents duplicate saves", async () => {
   assert.match(appSource, /if\(save\.disabled\)return/);
   assert.match(appSource, /document\.querySelectorAll\("\.modal-backdrop"\)/);
 });
+
+test("account roles include income and modals stack above the transaction drawer", async () => {
+  const [appSource, styles] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8")
+  ]);
+  assert.match(appSource, /<option>Income<\/option>/);
+  assert.match(appSource, /b\.onclick=\(\)=>node\.remove\(\)/);
+  assert.match(styles, /\.modal-backdrop \{[^}]*z-index:30/);
+  assert.match(styles, /\.drawer \{[^}]*z-index:22/);
+});
