@@ -123,4 +123,12 @@ test("referenced irregular budgets can be removed while retaining transaction hi
   assert.equal(db.prepare("SELECT COUNT(*) count FROM budgets WHERE category_id = 'property-taxes'").get().count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) count FROM transactions WHERE category_id = 'property-taxes'").get().count, transactionCount);
   assert.equal(irregularExpenses(db, 2026).categories.some((item) => item.id === "property-taxes"), false);
+  const reactivated = createCategory(db, { name: "Property Taxes", planningGroupId: "fixed-contractual", cadence: "monthly" });
+  assert.equal(reactivated.id, "property-taxes");
+  assert.equal(reactivated.active, 1);
+  assert.equal(reactivated.planningGroupId, "fixed-contractual");
+  assert.equal(reactivated.cadence, "monthly");
+  assert.equal(reactivated.targetBalanceMinor, null);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM categories WHERE name = 'Property Taxes'").get().count, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM transactions WHERE category_id = 'property-taxes'").get().count, transactionCount);
 });
