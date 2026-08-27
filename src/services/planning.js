@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { audit, rowToObject, rowsToObjects } from "../db.js";
 
-const FORMULA_VERSION = "planning-v3";
+const FORMULA_VERSION = "planning-v4";
 const allowedAssumptions = new Set([
-  "asOfDate", "emergencyCoverageMonths", "effectiveTaxRateBps",
+  "asOfDate", "emergencyCoverageMonths", "emergencyReserveFloorMinor", "effectiveTaxRateBps",
   "essentialAverageMonths", "generalAverageMonths", "irregularHistoryMonths",
   "obligationHorizonMonths", "investableHorizonYears", "pretaxRetirementMinor",
   "operatingCashBufferBps"
@@ -203,7 +203,8 @@ export function calculatePlan(db) {
     .reduce((sum, category) => sum + money(budgetAt(db, category.categoryId, monthOf(asOf))?.amount_minor), 0);
   const budgetOperatingFloor = Math.round(plannedMonthlyOrdinary * (1 + assumptions.operatingCashBufferBps / 10000));
   operatingTarget = Math.max(operatingTarget, budgetOperatingFloor);
-  const emergencyTarget = Math.round(committed / 12 * assumptions.emergencyCoverageMonths);
+  const calculatedEmergencyTarget = Math.round(committed / 12 * assumptions.emergencyCoverageMonths);
+  const emergencyTarget = Math.max(calculatedEmergencyTarget, money(assumptions.emergencyReserveFloorMinor));
   const obligationEnd = addMonths(asOf, assumptions.obligationHorizonMonths);
   const obligations = listObligations(db).filter((item) => item.dueDate >= asOf && item.dueDate <= obligationEnd);
   const obligationTarget = obligations.reduce((sum, item) => sum + item.amountMinor, 0);
@@ -243,7 +244,7 @@ export function calculatePlan(db) {
     sustainingGrossIncome: result("sustaining-gross-income", gross(household), "net-divided-by-one-minus-tax-rate", [assumptionRef("effectiveTaxRateBps")], asOf),
     comfortableGrossIncome: result("comfortable-gross-income", gross(comfortableNet), "net-plus-derived-savings-divided-by-one-minus-tax-rate", [assumptionRef("effectiveTaxRateBps"), ref("calculated-result", "annual-savings-requirement", savingsRequirement)], asOf),
     operatingCashTarget: result("operating-cash-target", operatingTarget, "greater-of-observed-31-day-peak-or-buffered-monthly-budget", [ref("ordinary-spending", "trailing-12-months", operatingDays.length), ref("monthly-budget", "ordinary-spending", plannedMonthlyOrdinary), assumptionRef("operatingCashBufferBps")], asOf),
-    emergencyReserveTarget: result("emergency-reserve-target", emergencyTarget, "committed-monthly-times-coverage", [assumptionRef("emergencyCoverageMonths")], asOf),
+    emergencyReserveTarget: result("emergency-reserve-target", emergencyTarget, "greater-of-committed-monthly-times-coverage-or-manual-floor", [assumptionRef("emergencyCoverageMonths"), assumptionRef("emergencyReserveFloorMinor")], asOf),
     liquidRequirement: result("liquid-requirement", liquidRequirement, "operating-plus-emergency-plus-obligations", obligations.map((o) => ref("known-obligation", o.id, o.amountMinor)), asOf),
     savingsCapacity: result("savings-capacity", savingsCapacity, "blended-net-income-minus-household-requirement", [ref("income-transactions", "trailing-12-months", income.transactionCount), ref("income-budgets", "trailing-12-months", income.budgetMonths)], asOf),
     annualSavingsRequirement: result("annual-savings-requirement", savingsRequirement, "cash-gaps-plus-deadline-paced-sinking-shortfalls", [ref("cash-gap", "operating", operatingGap), ref("cash-gap", "emergency", emergencyGap), ref("cash-gap", "known-obligations", obligationGap), ref("sinking-shortfalls", "annualized", annualizedSinkingRequirement)], asOf),
@@ -253,7 +254,7 @@ export function calculatePlan(db) {
     formulaVersion: FORMULA_VERSION, asOfDate: asOf, assumptions, requirementClasses,
     totals: { committedMinor: committed, lifestyleMinor: lifestyle, irregularMinor: irregular, householdMinor: household },
     income: { annualNetMinor: income.amountMinor, observedNetMinor: income.amountMinor, transactionCount: income.transactionCount, actualMonths: income.actualMonths, budgetMonths: income.budgetMonths, missingMonths: income.missingMonths, source: `${income.actualMonths} actual + ${income.budgetMonths} budget category-months${income.missingMonths ? `; ${income.missingMonths} missing` : ""}`, pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
-    cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
+    cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, calculatedEmergencyTargetMinor: calculatedEmergencyTarget, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
     obligations, sinkingFunds, accounts,
     capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
     results

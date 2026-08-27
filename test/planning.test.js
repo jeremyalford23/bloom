@@ -12,7 +12,7 @@ function transaction(db, { id, categoryId, date, amountMinor }) {
     .run(id, date, amountMinor, id, categoryId, id, now, now);
 }
 
-test("planning v3 is deterministic and traces results to source inputs", () => {
+test("planning v4 is deterministic and traces results to source inputs", () => {
   const db = openDatabase(":memory:");
   createAccount(db, { id:"ignored", name:"Checking", type:"checking", role:"Operating cash", balanceMinor:300000, balanceAsOf:"2026-08-31" });
   const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
@@ -23,7 +23,7 @@ test("planning v3 is deterministic and traces results to source inputs", () => {
   transaction(db, { id:"income-1", categoryId:"paycheck", date:"2026-08-03", amountMinor:300000 });
   const first = calculatePlan(db), second = calculatePlan(db);
   assert.equal(first.totals.committedMinor, 220000);
-  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v3");
+  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v4");
   assert.ok(first.results.householdRequirement.inputReferences.some((ref) => ref.id === "mortgage"));
   assert.deepEqual(first, second);
 });
@@ -82,6 +82,25 @@ test("operating cash uses the buffered monthly budget when history is sparse", (
   assert.equal(plan.cash.observedPeakMinor, 20000);
   assert.equal(plan.cash.budgetOperatingFloorMinor, 115000);
   assert.equal(plan.cash.operatingTargetMinor, 115000);
+});
+
+test("emergency reserve uses a manual floor until the spending-based target is higher", () => {
+  const db = openDatabase(":memory:");
+  createAccount(db, { name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
+  const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
+  db.prepare("UPDATE accounts SET id = 'checking' WHERE id = ?").run(account.id);
+  updatePlanningAssumptions(db, { asOfDate:"2026-08-31", emergencyCoverageMonths:6, emergencyReserveFloorMinor:2500000 });
+  transaction(db, { id:"mortgage-floor", categoryId:"mortgage", date:"2026-08-01", amountMinor:-100000 });
+
+  const floored = calculatePlan(db);
+  assert.equal(floored.cash.calculatedEmergencyTargetMinor, 50000);
+  assert.equal(floored.cash.emergencyTargetMinor, 2500000);
+  assert.equal(floored.results.emergencyReserveTarget.formulaName, "greater-of-committed-monthly-times-coverage-or-manual-floor");
+  assert.ok(floored.results.emergencyReserveTarget.inputReferences.some((ref) => ref.id === "emergencyReserveFloorMinor"));
+
+  updatePlanningAssumptions(db, { emergencyReserveFloorMinor:25000 });
+  const calculated = calculatePlan(db);
+  assert.equal(calculated.cash.emergencyTargetMinor, 50000);
 });
 
 test("annual savings requirement is calculated from cash gaps and paced sinking shortfalls", () => {
