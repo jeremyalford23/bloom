@@ -9,7 +9,7 @@ import {
 } from "../services/ledger.js";
 import { runRules } from "../services/rules.js";
 import {
-  budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget,
+  budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget, deleteIrregularBudget,
   getBudgetSettings, irregularExpenses, recurringExpenses, updateBudgetSettings
 } from "../services/budget.js";
 import { calculatePlan, createObligation, deleteObligation, getPlanningAssumptions, listObligations, updatePlanningAssumptions } from "../services/planning.js";
@@ -74,6 +74,7 @@ export async function handleApi(request, response, url, db) {
   if (method === "GET" && pathname === "/api/recurring") { sendJson(response, 200, recurringExpenses(db)); return true; }
   if (method === "POST" && pathname === "/api/recurring/decision") { sendJson(response, 200, decideRecurring(db, await readJson(request))); return true; }
   if (method === "GET" && pathname === "/api/irregular") { sendJson(response, 200, irregularExpenses(db, Number(url.searchParams.get("year")) || undefined)); return true; }
+  if ((params = matchPath(pathname, "/api/irregular/:id")) && method === "DELETE") { sendJson(response, 200, deleteIrregularBudget(db, params.id)); return true; }
   if (method === "GET" && pathname === "/api/planning-groups") { sendJson(response, 200, rowsToObjects(db.prepare("SELECT * FROM planning_groups ORDER BY name").all())); return true; }
   if (method === "GET" && pathname === "/api/plan") { sendJson(response, 200, calculatePlan(db)); return true; }
   if (method === "GET" && pathname === "/api/plan/assumptions") { sendJson(response, 200, getPlanningAssumptions(db)); return true; }

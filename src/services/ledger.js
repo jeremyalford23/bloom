@@ -192,12 +192,22 @@ export function createCategory(db, input) {
   if (!input.planningGroupId || !db.prepare("SELECT id FROM planning_groups WHERE id = ?").get(input.planningGroupId)) {
     throw new Error("Valid planning group is required");
   }
-  if (db.prepare("SELECT id FROM categories WHERE name = ? COLLATE NOCASE").get(name)) {
-    throw Object.assign(new Error("A category with this name already exists"), { statusCode: 409 });
-  }
   const allowedCadences = new Set(["monthly", "annual", "irregular"]);
   const cadence = input.cadence ?? "monthly";
   if (!allowedCadences.has(cadence)) throw new Error("Invalid category cadence");
+  const existing = db.prepare("SELECT * FROM categories WHERE name = ? COLLATE NOCASE").get(name);
+  if (existing?.active) {
+    throw Object.assign(new Error("A category with this name already exists"), { statusCode: 409 });
+  }
+  if (existing) {
+    db.prepare(
+      `UPDATE categories SET name = ?, planning_group_id = ?, cadence = ?, active = 1,
+        target_balance_minor = NULL, current_balance_minor = NULL,
+        annual_expected_minor = NULL, next_due_date = NULL WHERE id = ?`
+    ).run(name, input.planningGroupId, cadence, existing.id);
+    audit(db, "category", existing.id, "reactivated", input);
+    return rowToObject(db.prepare("SELECT * FROM categories WHERE id = ?").get(existing.id));
+  }
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(

@@ -80,6 +80,13 @@ test("budget modal scopes values and prevents duplicate saves", async () => {
   assert.match(appSource, /document\.querySelectorAll\("\.modal-backdrop"\)/);
 });
 
+test("irregular budgets expose a confirmed delete action", async () => {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /class="button danger delete-irregular"/);
+  assert.match(appSource, /request\("\/api\/irregular\/"\+button\.dataset\.id,\{method:"DELETE"\}\)/);
+  assert.match(appSource, /confirm\('Delete the irregular budget/);
+});
+
 test("account roles include income and modals stack above the transaction drawer", async () => {
   const [appSource, styles] = await Promise.all([
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
