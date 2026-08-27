@@ -83,7 +83,7 @@ test("budget modal scopes values and prevents duplicate saves", async () => {
 test("irregular budgets expose a confirmed delete action", async () => {
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(appSource, /class="button danger delete-irregular"/);
-  assert.match(appSource, /request\("\/api\/categories\/"\+button\.dataset\.id,\{method:"DELETE"\}\)/);
+  assert.match(appSource, /request\("\/api\/irregular\/"\+button\.dataset\.id,\{method:"DELETE"\}\)/);
   assert.match(appSource, /confirm\('Delete the irregular budget/);
 });
 

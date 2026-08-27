@@ -4,7 +4,7 @@ import { openDatabase } from "../src/db.js";
 import { commitImport, stageImport } from "../src/services/imports.js";
 import { createAccount, createCategory, deleteCategory, updateCategory } from "../src/services/ledger.js";
 import {
-  budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget,
+  budgetOverview, categoryBudgetDetail, createBudget, decideRecurring, deleteBudget, deleteIrregularBudget,
   getBudgetSettings, irregularExpenses, recurringExpenses, updateBudgetSettings
 } from "../src/services/budget.js";
 
@@ -111,4 +111,16 @@ test("irregular targets and budget settings persist", () => {
   assert.equal(getBudgetSettings(db).averageWindow, 12);
   assert.equal(updateBudgetSettings(db, { averageWindow: 6, rollover: true }).averageWindow, 6);
   assert.equal(getBudgetSettings(db).rollover, true);
+});
+
+test("referenced irregular budgets can be removed while retaining transaction history", () => {
+  const { db } = fixture();
+  db.prepare("UPDATE transactions SET category_id = 'property-taxes' WHERE original_description = 'WENDYS'").run();
+  createBudget(db, { categoryId: "property-taxes", amountMinor: 50000, effectiveFrom: "2026-08" });
+  const transactionCount = db.prepare("SELECT COUNT(*) count FROM transactions WHERE category_id = 'property-taxes'").get().count;
+  assert.equal(deleteIrregularBudget(db, "property-taxes").historyRetained, true);
+  assert.equal(db.prepare("SELECT active FROM categories WHERE id = 'property-taxes'").get().active, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM budgets WHERE category_id = 'property-taxes'").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM transactions WHERE category_id = 'property-taxes'").get().count, transactionCount);
+  assert.equal(irregularExpenses(db, 2026).categories.some((item) => item.id === "property-taxes"), false);
 });

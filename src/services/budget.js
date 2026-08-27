@@ -179,6 +179,20 @@ export function deleteBudget(db, id) {
   return { id, deleted: true };
 }
 
+export function deleteIrregularBudget(db, id) {
+  const category = db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
+  if (!category) throw Object.assign(new Error("Irregular budget not found"), { statusCode: 404 });
+  if (category.cadence !== "irregular" && category.planning_group_id !== "irregular-expenses") {
+    throw Object.assign(new Error("Category is not an irregular budget"), { statusCode: 400 });
+  }
+  db.transaction(() => {
+    db.prepare("DELETE FROM budgets WHERE category_id = ?").run(id);
+    db.prepare("UPDATE categories SET active = 0 WHERE id = ?").run(id);
+    audit(db, "category", id, "deactivated", { name: category.name, reason: "irregular budget deleted" });
+  })();
+  return { id, deleted: true, historyRetained: true };
+}
+
 export function getBudgetSettings(db) {
   return Object.fromEntries(db.prepare("SELECT key, value_json FROM budget_settings").all().map((row) => [row.key, JSON.parse(row.value_json)]));
 }
