@@ -261,6 +261,7 @@ function migrateSchema(db) {
   assumption.run("obligationHorizonMonths", JSON.stringify(6), "months", "Near-term window for known dated obligations.", now);
   assumption.run("investableHorizonYears", JSON.stringify(3), "years", "Sinking funds due sooner remain liquid.", now);
   assumption.run("pretaxRetirementMinor", JSON.stringify(0), "minor-currency", "Observed annual pre-tax retirement saving, shown separately.", now);
+  assumption.run("operatingCashBufferBps", JSON.stringify(1500), "basis-points", "Buffer applied to planned monthly ordinary spending when setting the operating-cash floor.", now);
   db.prepare("DELETE FROM planning_assumptions WHERE key IN ('operatingCashMonths', 'annualSavingsRequirementMinor', 'paycheckTimingBufferMinor')").run();
 }
 

@@ -12,7 +12,7 @@ function transaction(db, { id, categoryId, date, amountMinor }) {
     .run(id, date, amountMinor, id, categoryId, id, now, now);
 }
 
-test("planning v2 is deterministic and traces results to source inputs", () => {
+test("planning v3 is deterministic and traces results to source inputs", () => {
   const db = openDatabase(":memory:");
   createAccount(db, { id:"ignored", name:"Checking", type:"checking", role:"Operating cash", balanceMinor:300000, balanceAsOf:"2026-08-31" });
   const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
@@ -23,12 +23,12 @@ test("planning v2 is deterministic and traces results to source inputs", () => {
   transaction(db, { id:"income-1", categoryId:"paycheck", date:"2026-08-03", amountMinor:300000 });
   const first = calculatePlan(db), second = calculatePlan(db);
   assert.equal(first.totals.committedMinor, 220000);
-  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v2");
+  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v3");
   assert.ok(first.results.householdRequirement.inputReferences.some((ref) => ref.id === "mortgage"));
   assert.deepEqual(first, second);
 });
 
-test("operating cash is derived from the highest trailing 31-day ordinary spend", () => {
+test("operating cash considers the highest trailing 31-day ordinary spend", () => {
   const db = openDatabase(":memory:");
   createAccount(db, { name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
   const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
@@ -41,7 +41,47 @@ test("operating cash is derived from the highest trailing 31-day ordinary spend"
 
   const plan = calculatePlan(db);
   assert.equal(plan.cash.operatingTargetMinor, 40000);
-  assert.equal(plan.results.operatingCashTarget.formulaName, "highest-observed-31-day-ordinary-spend");
+  assert.equal(plan.results.operatingCashTarget.formulaName, "greater-of-observed-31-day-peak-or-buffered-monthly-budget");
+});
+
+test("sparse history is blended with budgets instead of treating missing months as zero", () => {
+  const db = openDatabase(":memory:");
+  createAccount(db, { id:"ignored", name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
+  const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
+  db.prepare("UPDATE accounts SET id = 'checking' WHERE id = ?").run(account.id);
+  updatePlanningAssumptions(db, { asOfDate:"2026-08-31", generalAverageMonths:12 });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO budgets (id, category_id, amount_minor, cadence, effective_from, note, created_at, updated_at)
+    VALUES ('mortgage-budget', 'mortgage', 90000, 'monthly', '2025-09', 'test', ?, ?)`
+  ).run(now, now);
+  transaction(db, { id:"mortgage-actual", categoryId:"mortgage", date:"2026-08-01", amountMinor:-100000 });
+
+  const mortgage = calculatePlan(db).requirementClasses
+    .find((group) => group.id === "fixed-contractual").categories
+    .find((category) => category.categoryId === "mortgage");
+  assert.equal(mortgage.annualMinor, 1090000);
+  assert.equal(mortgage.actualMonths, 1);
+  assert.equal(mortgage.budgetMonths, 11);
+  assert.equal(mortgage.missingMonths, 0);
+  assert.equal(mortgage.confidence, "blended");
+});
+
+test("operating cash uses the buffered monthly budget when history is sparse", () => {
+  const db = openDatabase(":memory:");
+  createAccount(db, { id:"ignored", name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
+  const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
+  db.prepare("UPDATE accounts SET id = 'checking' WHERE id = ?").run(account.id);
+  updatePlanningAssumptions(db, { asOfDate:"2026-08-31", operatingCashBufferBps:1500 });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO budgets (id, category_id, amount_minor, cadence, effective_from, note, created_at, updated_at)
+    VALUES ('grocery-budget', 'groceries', 100000, 'monthly', '2026-01', 'test', ?, ?)`
+  ).run(now, now);
+  transaction(db, { id:"grocery-actual", categoryId:"groceries", date:"2026-08-01", amountMinor:-20000 });
+
+  const plan = calculatePlan(db);
+  assert.equal(plan.cash.observedPeakMinor, 20000);
+  assert.equal(plan.cash.budgetOperatingFloorMinor, 115000);
+  assert.equal(plan.cash.operatingTargetMinor, 115000);
 });
 
 test("annual savings requirement is calculated from cash gaps and paced sinking shortfalls", () => {
