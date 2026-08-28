@@ -33,6 +33,14 @@ test("planning v5 is deterministic and traces results to source inputs", () => {
   assert.deepEqual(first, second);
 });
 
+test("planning response includes recent assumption history", () => {
+  const db = openDatabase(":memory:");
+  updatePlanningAssumptions(db, { emergencyCoverageMonths: 9 });
+  const plan = calculatePlan(db);
+  assert.equal(plan.assumptionHistory[0].assumptionKey, "emergencyCoverageMonths");
+  assert.equal(plan.assumptionHistory[0].detail.value, 9);
+});
+
 test("operating cash considers the highest trailing 31-day ordinary spend", () => {
   const db = openDatabase(":memory:");
   createAccount(db, { name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
