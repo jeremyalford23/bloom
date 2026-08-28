@@ -226,18 +226,19 @@ export function deleteCategory(db, id) {
     rules: Number(db.prepare("SELECT COUNT(*) count FROM classification_rules WHERE category_id = ?").get(id).count),
     recurringItems: Number(db.prepare("SELECT COUNT(*) count FROM recurring_items WHERE category_id = ?").get(id).count)
   };
-  if (Object.values(references).some(Boolean)) {
-    throw Object.assign(new Error("Category cannot be deleted while it is used by transactions, splits, rules, or recurring items"), {
-      statusCode: 409
-    });
-  }
+  const historyRetained = Object.values(references).some(Boolean);
   db.transaction(() => {
     db.prepare("DELETE FROM budgets WHERE category_id = ?").run(id);
-    db.prepare("INSERT OR REPLACE INTO deleted_categories (id, deleted_at) VALUES (?, ?)").run(id, new Date().toISOString());
-    db.prepare("DELETE FROM categories WHERE id = ?").run(id);
-    audit(db, "category", id, "deleted", { name: category.name });
+    if (historyRetained) {
+      db.prepare("UPDATE categories SET active = 0 WHERE id = ?").run(id);
+      audit(db, "category", id, "deactivated", { name: category.name, reason: "budget deleted", references });
+    } else {
+      db.prepare("INSERT OR REPLACE INTO deleted_categories (id, deleted_at) VALUES (?, ?)").run(id, new Date().toISOString());
+      db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+      audit(db, "category", id, "deleted", { name: category.name });
+    }
   })();
-  return { id, deleted: true };
+  return historyRetained ? { id, deleted: true, historyRetained: true } : { id, deleted: true };
 }
 
 export function updateCategory(db, id, input) {

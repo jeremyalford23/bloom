@@ -3,7 +3,7 @@ import { audit, rowToObject, rowsToObjects } from "../db.js";
 
 const FORMULA_VERSION = "planning-v4";
 const allowedAssumptions = new Set([
-  "asOfDate", "emergencyCoverageMonths", "emergencyReserveFloorMinor", "effectiveTaxRateBps",
+  "asOfDate", "emergencyCoverageMonths", "emergencyReserveFloorMinor", "emergencyReserveBalanceMinor", "effectiveTaxRateBps",
   "essentialAverageMonths", "generalAverageMonths", "irregularHistoryMonths",
   "obligationHorizonMonths", "investableHorizonYears", "pretaxRetirementMinor",
   "operatingCashBufferBps"
@@ -211,13 +211,17 @@ export function calculatePlan(db) {
   const accounts = rowsToObjects(db.prepare("SELECT * FROM accounts ORDER BY name").all())
     .map((account) => ({ ...account, balanceMinor: planningBalance(account) }));
   const role = (needle) => accounts.filter((a) => a.role.toLowerCase().includes(needle)).reduce((sum, a) => sum + money(a.balanceMinor), 0);
-  const operatingHeld = role("operating cash"), emergencyHeld = role("emergency reserve"), obligationHeld = role("known");
+  const operatingHeld = role("operating cash");
+  const importedEmergencyHeld = role("emergency reserve");
+  const manualEmergencyHeld = money(assumptions.emergencyReserveBalanceMinor);
+  const emergencyHeld = importedEmergencyHeld + manualEmergencyHeld;
+  const obligationHeld = role("known");
   const sinkingFunds = rowsToObjects(db.prepare(`SELECT id, name, target_balance_minor, current_balance_minor, annual_expected_minor, next_due_date
     FROM categories WHERE active = 1 AND (cadence = 'irregular' OR planning_group_id = 'irregular-expenses') ORDER BY next_due_date, name`).all())
     .map((item) => ({ ...item, targetBalanceMinor: money(item.targetBalanceMinor), currentBalanceMinor: money(item.currentBalanceMinor), shortfallMinor: Math.max(0, money(item.targetBalanceMinor) - money(item.currentBalanceMinor)), heldAs: item.nextDueDate && item.nextDueDate <= addMonths(asOf, assumptions.investableHorizonYears * 12) ? "cash" : "invested" }));
   const sinkingTarget = sinkingFunds.reduce((sum, item) => sum + item.targetBalanceMinor, 0);
   const sinkingHeld = sinkingFunds.reduce((sum, item) => sum + item.currentBalanceMinor, 0);
-  const totalHoldings = accounts.reduce((sum, item) => sum + money(item.balanceMinor), 0);
+  const totalHoldings = accounts.reduce((sum, item) => sum + money(item.balanceMinor), 0) + manualEmergencyHeld;
   const liquidRequirement = operatingTarget + emergencyTarget + obligationTarget;
   const cashHeld = operatingHeld + emergencyHeld + obligationHeld;
   const operatingGap = Math.max(0, operatingTarget - operatingHeld);
@@ -254,7 +258,7 @@ export function calculatePlan(db) {
     formulaVersion: FORMULA_VERSION, asOfDate: asOf, assumptions, requirementClasses,
     totals: { committedMinor: committed, lifestyleMinor: lifestyle, irregularMinor: irregular, householdMinor: household },
     income: { annualNetMinor: income.amountMinor, observedNetMinor: income.amountMinor, transactionCount: income.transactionCount, actualMonths: income.actualMonths, budgetMonths: income.budgetMonths, missingMonths: income.missingMonths, source: `${income.actualMonths} actual + ${income.budgetMonths} budget category-months${income.missingMonths ? `; ${income.missingMonths} missing` : ""}`, pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
-    cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, calculatedEmergencyTargetMinor: calculatedEmergencyTarget, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
+    cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, calculatedEmergencyTargetMinor: calculatedEmergencyTarget, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, importedEmergencyHeldMinor: importedEmergencyHeld, manualEmergencyHeldMinor: manualEmergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
     obligations, sinkingFunds, accounts,
     capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
     results

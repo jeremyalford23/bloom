@@ -85,10 +85,13 @@ test("categories can be created and unused categories can be deleted with their 
   assert.equal(db.prepare("SELECT COUNT(*) count FROM budgets WHERE category_id = ?").get(category.id).count, 0);
 });
 
-test("categories referenced by transactions cannot be deleted", () => {
+test("referenced budget categories are retired while retaining history", () => {
   const { db } = fixture();
-  assert.throws(() => deleteCategory(db, "restaurants"), /cannot be deleted/);
-  assert.ok(db.prepare("SELECT id FROM categories WHERE id = 'restaurants'").get());
+  createBudget(db, { categoryId: "restaurants", amountMinor: 4000, effectiveFrom: "2026-08" });
+  assert.deepEqual(deleteCategory(db, "restaurants"), { id: "restaurants", deleted: true, historyRetained: true });
+  assert.equal(db.prepare("SELECT active FROM categories WHERE id = 'restaurants'").get().active, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM budgets WHERE category_id = 'restaurants'").get().count, 0);
+  assert.ok(db.prepare("SELECT id FROM transactions WHERE category_id = 'restaurants'").get());
 });
 
 test("recurring detection can be confirmed or dismissed", () => {
