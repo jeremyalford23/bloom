@@ -223,6 +223,22 @@ export function calculatePlan(db) {
     incomeSources.push(estimate.source);
   }
   const income = { amountMinor: projectedIncome, observedMinor: observedIncome, transactionCount: incomeTransactionCount, actualMonths: incomeActualMonths, completeMonths: incomeCompleteMonths, budgetMonths: incomeBudgetMonths, missingMonths: incomeMissingMonths, sources: incomeSources };
+  const realizedSavingsMonths = rowsToObjects(db.prepare(`
+    WITH activity AS (
+      SELECT t.id, t.posted_date, t.amount_minor FROM transactions t
+      WHERE t.is_transfer = 0 AND t.excluded = 0
+        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
+      UNION ALL
+      SELECT t.id, t.posted_date, s.amount_minor FROM transaction_splits s
+      JOIN transactions t ON t.id = s.transaction_id WHERE t.is_transfer = 0 AND t.excluded = 0
+    )
+    SELECT substr(posted_date, 1, 7) month, COALESCE(SUM(amount_minor), 0) amount_minor
+    FROM activity WHERE posted_date >= ? AND posted_date <= ?
+    GROUP BY substr(posted_date, 1, 7)
+  `).all(`${incomeMonths[0]}-01`, asOf));
+  const realizedByMonth = new Map(realizedSavingsMonths.map((item) => [item.month, money(item.amountMinor)]));
+  const monthlySavings = incomeMonths.map((month) => ({ month, amountMinor: realizedByMonth.get(month) || 0 }));
+  const realizedSavings = monthlySavings.reduce((sum, item) => sum + item.amountMinor, 0);
   const operatingFrom = addMonths(asOf, -12);
   const operatingDays = rowsToObjects(db.prepare(`
     WITH activity AS (
@@ -329,7 +345,7 @@ export function calculatePlan(db) {
     income: { annualNetMinor: income.amountMinor, projectedAnnualNetMinor: income.amountMinor, observedNetMinor: income.observedMinor, transactionCount: income.transactionCount, actualMonths: income.actualMonths, completeMonths: income.completeMonths, budgetMonths: income.budgetMonths, missingMonths: income.missingMonths, confidence: income.completeMonths >= 3 || income.budgetMonths ? "supported" : income.actualMonths ? "provisional" : "insufficient", source: income.sources.join("; ") || "no income evidence", pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
     cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, calculatedEmergencyTargetMinor: calculatedEmergencyTarget, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, importedEmergencyHeldMinor: importedEmergencyHeld, manualEmergencyHeldMinor: manualEmergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
     obligations, sinkingFunds, accounts,
-    capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
+    capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, realizedSavingsMinor: realizedSavings, monthlySavings, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
     results
   };
 }
