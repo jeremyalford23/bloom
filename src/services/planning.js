@@ -268,9 +268,26 @@ export function calculatePlan(db) {
   const manualEmergencyHeld = money(assumptions.emergencyReserveBalanceMinor);
   const emergencyHeld = importedEmergencyHeld + manualEmergencyHeld;
   const obligationHeld = role("known");
+  const drawYears = Array.from({ length: 5 }, (_, index) => Number(asOf.slice(0, 4)) - 4 + index);
   const sinkingFunds = rowsToObjects(db.prepare(`SELECT id, name, target_balance_minor, current_balance_minor, annual_expected_minor, next_due_date
     FROM categories WHERE active = 1 AND (cadence = 'irregular' OR planning_group_id = 'irregular-expenses') ORDER BY next_due_date, name`).all())
-    .map((item) => ({ ...item, targetBalanceMinor: money(item.targetBalanceMinor), currentBalanceMinor: money(item.currentBalanceMinor), shortfallMinor: Math.max(0, money(item.targetBalanceMinor) - money(item.currentBalanceMinor)), heldAs: item.nextDueDate && item.nextDueDate <= addMonths(asOf, assumptions.investableHorizonYears * 12) ? "cash" : "invested" }));
+    .map((item) => {
+      const annualDraws = drawYears.map((year) => {
+        const draw = db.prepare(`WITH activity AS (
+          SELECT t.id, t.posted_date, t.amount_minor, t.category_id FROM transactions t
+          WHERE t.is_transfer = 0 AND t.excluded = 0 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
+          UNION ALL
+          SELECT t.id, t.posted_date, s.amount_minor, s.category_id FROM transaction_splits s
+          JOIN transactions t ON t.id = s.transaction_id WHERE t.is_transfer = 0 AND t.excluded = 0
+        ) SELECT COALESCE(SUM(CASE WHEN amount_minor < 0 THEN -amount_minor ELSE 0 END), 0) amount_minor,
+          COUNT(DISTINCT CASE WHEN amount_minor < 0 THEN id END) transaction_count
+          FROM activity WHERE category_id = ? AND posted_date >= ? AND posted_date <= ?`).get(
+          item.id, `${year}-01-01`, year === Number(asOf.slice(0, 4)) ? asOf : `${year}-12-31`
+        );
+        return { year, amountMinor: money(draw.amount_minor), transactionCount: Number(draw.transaction_count || 0), ytd: year === Number(asOf.slice(0, 4)) };
+      });
+      return { ...item, targetBalanceMinor: money(item.targetBalanceMinor), currentBalanceMinor: money(item.currentBalanceMinor), shortfallMinor: Math.max(0, money(item.targetBalanceMinor) - money(item.currentBalanceMinor)), heldAs: item.nextDueDate && item.nextDueDate <= addMonths(asOf, assumptions.investableHorizonYears * 12) ? "cash" : "invested", annualDraws, transactionCount: annualDraws.reduce((sum, draw) => sum + draw.transactionCount, 0) };
+    });
   const sinkingTarget = sinkingFunds.reduce((sum, item) => sum + item.targetBalanceMinor, 0);
   const sinkingHeld = sinkingFunds.reduce((sum, item) => sum + item.currentBalanceMinor, 0);
   const totalHoldings = accounts.reduce((sum, item) => sum + money(item.balanceMinor), 0) + manualEmergencyHeld;
