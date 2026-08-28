@@ -87,6 +87,27 @@ test("irregular budgets expose a confirmed delete action", async () => {
   assert.match(appSource, /confirm\('Delete the irregular budget/);
 });
 
+test("sinking funds expose edit and confirmed delete actions", async () => {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /class="button edit-sinking"/);
+  assert.match(appSource, /class="button danger delete-sinking"/);
+  assert.match(appSource, /editIrregular\(data\.sinkingFunds\.find/);
+  assert.match(appSource, /confirm\('Delete the sinking fund/);
+});
+
+test("plan accounts and assumptions use the purpose and traceability layouts", async () => {
+  const [appSource, styles] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8")
+  ]);
+  assert.match(appSource, /class="accounts-hero"/);
+  assert.match(appSource, /Purposes the plan understands/);
+  assert.match(appSource, /class="assumptions-hero"/);
+  assert.match(appSource, /Reading the traceability chain/);
+  assert.match(styles, /\.accounts-grid \{/);
+  assert.match(styles, /\.assumptions-grid \{/);
+});
+
 test("account roles include income and modals stack above the transaction drawer", async () => {
   const [appSource, styles] = await Promise.all([
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),

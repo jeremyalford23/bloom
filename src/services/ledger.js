@@ -250,10 +250,10 @@ export function updateCategory(db, id, input) {
      WHERE id = ?`
   ).run(input.name ?? current.name, input.planningGroupId ?? current.planning_group_id, input.cadence ?? current.cadence,
     input.active === undefined ? current.active : Number(Boolean(input.active)),
-    input.targetBalanceMinor ?? current.target_balance_minor,
-    input.currentBalanceMinor ?? current.current_balance_minor,
-    input.annualExpectedMinor ?? current.annual_expected_minor,
-    input.nextDueDate ?? current.next_due_date, id);
+    Object.hasOwn(input, "targetBalanceMinor") ? input.targetBalanceMinor : current.target_balance_minor,
+    Object.hasOwn(input, "currentBalanceMinor") ? input.currentBalanceMinor : current.current_balance_minor,
+    Object.hasOwn(input, "annualExpectedMinor") ? input.annualExpectedMinor : current.annual_expected_minor,
+    Object.hasOwn(input, "nextDueDate") ? input.nextDueDate : current.next_due_date, id);
   audit(db, "category", id, "updated", input);
   return rowToObject(db.prepare("SELECT * FROM categories WHERE id = ?").get(id));
 }

@@ -67,6 +67,18 @@ export function getPlanningAssumptions(db) {
     .map((item) => ({ ...item, value: JSON.parse(item.valueJson) }));
 }
 
+function getAssumptionHistory(db) {
+  return rowsToObjects(db.prepare(
+    `SELECT entity_id assumption_key, detail_json, created_at
+     FROM audit_events WHERE entity_type = 'planning_assumption' AND action = 'updated'
+     ORDER BY created_at DESC LIMIT 8`
+  ).all()).map((event) => ({
+    assumptionKey: event.assumptionKey,
+    detail: JSON.parse(event.detailJson || "{}"),
+    createdAt: event.createdAt
+  }));
+}
+
 export function updatePlanningAssumptions(db, input) {
   const now = isoNow();
   const statement = db.prepare("UPDATE planning_assumptions SET value_json = ?, updated_at = ? WHERE key = ?");
@@ -276,7 +288,12 @@ export function calculatePlan(db) {
   const obligationEnd = addMonths(asOf, assumptions.obligationHorizonMonths);
   const obligations = listObligations(db).filter((item) => item.dueDate >= asOf && item.dueDate <= obligationEnd);
   const obligationTarget = obligations.reduce((sum, item) => sum + item.amountMinor, 0);
-  const accounts = rowsToObjects(db.prepare("SELECT * FROM accounts ORDER BY name").all())
+  const accounts = rowsToObjects(db.prepare(
+    `SELECT a.*,
+      (SELECT COUNT(*) FROM transactions t WHERE t.account_id = a.id) transaction_count,
+      (SELECT MAX(t.posted_date) FROM transactions t WHERE t.account_id = a.id) last_import
+     FROM accounts a ORDER BY a.name`
+  ).all())
     .map((account) => ({ ...account, balanceMinor: planningBalance(account) }));
   const role = (needle) => accounts.filter((a) => a.role.toLowerCase().includes(needle)).reduce((sum, a) => sum + money(a.balanceMinor), 0);
   const operatingHeld = role("operating cash");
@@ -344,7 +361,7 @@ export function calculatePlan(db) {
     totals: { committedMinor: committed, lifestyleMinor: lifestyle, irregularMinor: irregular, householdMinor: household },
     income: { annualNetMinor: income.amountMinor, projectedAnnualNetMinor: income.amountMinor, observedNetMinor: income.observedMinor, transactionCount: income.transactionCount, actualMonths: income.actualMonths, completeMonths: income.completeMonths, budgetMonths: income.budgetMonths, missingMonths: income.missingMonths, confidence: income.completeMonths >= 3 || income.budgetMonths ? "supported" : income.actualMonths ? "provisional" : "insufficient", source: income.sources.join("; ") || "no income evidence", pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
     cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, calculatedEmergencyTargetMinor: calculatedEmergencyTarget, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, importedEmergencyHeldMinor: importedEmergencyHeld, manualEmergencyHeldMinor: manualEmergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
-    obligations, sinkingFunds, accounts,
+    obligations, sinkingFunds, accounts, assumptionHistory: getAssumptionHistory(db),
     capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, realizedSavingsMinor: realizedSavings, monthlySavings, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },
     results
   };
