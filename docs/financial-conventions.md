@@ -23,6 +23,15 @@ These conventions are normative for Bloom's domain and calculations.
 - The household timezone is an explicit setting; the initial default is `America/Chicago`.
 - Reporting periods follow the calendar unless an explicit fiscal-calendar setting is introduced.
 
+## Sparse-history estimates
+
+- A month without imported evidence is unavailable, not a zero-value month, and is excluded from observed-average denominators.
+- Budget averages disclose the number of observed category-months supporting the result.
+- Planning estimates annualize the mean of available completed months. When budgets exist, one or two observed months are blended with the budget as a prior; observed evidence receives more weight as it accumulates.
+- Activity in an incomplete current month is provisional. It is projected using the applicable budget or a pace estimate capped at twice the observed amount.
+- Irregular activity uses an explicit annual expectation when available. Without one, observed spending is a provisional annual floor and its frequency remains unconfirmed.
+- Income projections distinguish the amount actually observed from the annualized planning estimate and disclose provisional confidence.
+
 ## Identity and imports
 
 - Domain records use opaque stable IDs.
@@ -49,4 +58,3 @@ When inputs disagree, Bloom uses this order while preserving all evidence:
 5. Unclassified imported value
 
 Derived plan outputs never overwrite their inputs.
-

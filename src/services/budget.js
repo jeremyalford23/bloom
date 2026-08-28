@@ -43,22 +43,30 @@ function budgetAt(db, categoryId, month) {
 
 export function budgetOverview(db, requestedMonth = currentMonth()) {
   const month = validMonth(requestedMonth);
+  const settings = getBudgetSettings(db);
+  const averageWindow = Math.max(1, Number(settings.averageWindow) || 12);
+  const averageFrom = shiftMonth(month, -averageWindow + 1) + "-01";
+  const averageTo = shiftMonth(month, 1) + "-01";
   const categories = rowsToObjects(db.prepare(
     ACTIVITY_CTE + `
     SELECT c.id, c.name, c.cadence, c.planning_group_id, p.name planning_group_name, p.kind,
       COALESCE(SUM(CASE WHEN substr(a.posted_date, 1, 7) = ? AND ((p.kind = 'income' AND a.amount_minor > 0) OR (p.kind <> 'income' AND a.amount_minor < 0)) THEN ABS(a.amount_minor) ELSE 0 END), 0) actual_minor,
       COALESCE(SUM(CASE WHEN a.posted_date >= ? AND a.posted_date < ? AND ((p.kind = 'income' AND a.amount_minor > 0) OR (p.kind <> 'income' AND a.amount_minor < 0)) THEN ABS(a.amount_minor) ELSE 0 END), 0) history_minor,
+      COUNT(DISTINCT CASE WHEN a.posted_date >= ? AND a.posted_date < ? AND ((p.kind = 'income' AND a.amount_minor > 0) OR (p.kind <> 'income' AND a.amount_minor < 0)) THEN substr(a.posted_date, 1, 7) END) history_month_count,
       COUNT(DISTINCT CASE WHEN substr(a.posted_date, 1, 7) = ? THEN a.transaction_id END) transaction_count
     FROM categories c JOIN planning_groups p ON p.id = c.planning_group_id
     LEFT JOIN activity a ON a.category_id = c.id
     WHERE c.active = 1 GROUP BY c.id ORDER BY p.name, c.name`
-  ).all(month, shiftMonth(month, -11) + "-01", shiftMonth(month, 1) + "-01", month));
+  ).all(month, averageFrom, averageTo, averageFrom, averageTo, month));
 
   for (const category of categories) {
     const budget = budgetAt(db, category.id, month);
     category.budgetId = budget?.id ?? null;
     category.budgetMinor = budget?.amount_minor ?? 0;
-    category.average12Minor = Math.round(category.historyMinor / 12);
+    category.averageWindow = averageWindow;
+    category.observedMonthCount = category.historyMonthCount;
+    category.averageMinor = category.historyMonthCount ? Math.round(category.historyMinor / category.historyMonthCount) : 0;
+    category.average12Minor = category.averageMinor;
     category.deltaMinor = category.actualMinor - category.budgetMinor;
   }
 
@@ -66,13 +74,15 @@ export function budgetOverview(db, requestedMonth = currentMonth()) {
   for (const category of categories) {
     let group = groups.find((item) => item.id === category.planningGroupId);
     if (!group) {
-      group = { id: category.planningGroupId, name: category.planningGroupName, kind: category.kind, categories: [], budgetMinor: 0, actualMinor: 0, average12Minor: 0 };
+      group = { id: category.planningGroupId, name: category.planningGroupName, kind: category.kind, categories: [], budgetMinor: 0, actualMinor: 0, averageMinor: 0, average12Minor: 0, averageWindow, observedMonthCount: 0 };
       groups.push(group);
     }
     group.categories.push(category);
     group.budgetMinor += category.budgetMinor;
     group.actualMinor += category.actualMinor;
-    group.average12Minor += category.average12Minor;
+    group.averageMinor += category.averageMinor;
+    group.average12Minor = group.averageMinor;
+    group.observedMonthCount = Math.max(group.observedMonthCount, category.observedMonthCount);
   }
 
   const transactionSummary = rowToObject(db.prepare(
@@ -91,6 +101,8 @@ export function budgetOverview(db, requestedMonth = currentMonth()) {
   const incomeBudgetMinor = incomeGroups.reduce((total, group) => total + group.budgetMinor, 0);
   return {
     month,
+    averageWindow,
+    observedMonthCount: Math.max(0, ...categories.map((category) => category.observedMonthCount)),
     previousMonth: shiftMonth(month, -1),
     nextMonth: shiftMonth(month, 1),
     groups,
@@ -128,17 +140,30 @@ export function categoryBudgetDetail(db, categoryId, requestedMonth = currentMon
     const budget = budgetAt(db, categoryId, historyMonth);
     return {
       month: historyMonth,
+      covered: Boolean(actual?.transaction_count),
       actualMinor: actual?.actual_minor ?? 0,
       transactionCount: actual?.transaction_count ?? 0,
       budgetMinor: budget?.amount_minor ?? 0,
       budgetId: budget?.id ?? null
     };
   });
-  const totals = category.history.map((item) => item.actualMinor);
-  const average = (count) => Math.round(totals.slice(-count).reduce((sum, value) => sum + value, 0) / count);
-  category.averages = { threeMonthMinor: average(3), sixMonthMinor: average(6), twelveMonthMinor: average(12) };
+  const average = (count) => {
+    const comparable = category.history.slice(-count).filter((item) => item.covered);
+    return {
+      amountMinor: comparable.length ? Math.round(comparable.reduce((sum, item) => sum + item.actualMinor, 0) / comparable.length) : 0,
+      observedMonthCount: comparable.length,
+      requestedMonthCount: count
+    };
+  };
+  const three = average(3), six = average(6), twelve = average(12);
+  category.averages = {
+    threeMonthMinor: three.amountMinor, sixMonthMinor: six.amountMinor, twelveMonthMinor: twelve.amountMinor,
+    threeMonthCount: three.observedMonthCount, sixMonthCount: six.observedMonthCount, twelveMonthCount: twelve.observedMonthCount
+  };
   category.current = category.history.at(-1);
-  category.offPlanMonths = category.history.filter((item) => item.budgetMinor > 0 && (
+  const comparableMonths = category.history.filter((item) => item.covered && item.budgetMinor > 0);
+  category.comparableMonthCount = comparableMonths.length;
+  category.offPlanMonths = comparableMonths.filter((item) => (
     category.kind === "income" ? item.actualMinor < item.budgetMinor : item.actualMinor > item.budgetMinor
   )).length;
   category.overBudgetMonths = category.offPlanMonths;
@@ -204,7 +229,13 @@ export function updateBudgetSettings(db, input) {
      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
   );
   const now = new Date().toISOString();
-  for (const [key, value] of Object.entries(input)) if (allowed.has(key)) statement.run(key, JSON.stringify(value), now);
+  for (const [key, value] of Object.entries(input)) {
+    if (!allowed.has(key)) continue;
+    if (key === "averageWindow" && (!Number.isSafeInteger(Number(value)) || Number(value) < 1 || Number(value) > 12)) {
+      throw new Error("Average window must be between 1 and 12 months");
+    }
+    statement.run(key, JSON.stringify(key === "averageWindow" ? Number(value) : value), now);
+  }
   return getBudgetSettings(db);
 }
 
@@ -217,7 +248,7 @@ export function recurringExpenses(db) {
      FROM transactions t JOIN merchants m ON m.id = t.merchant_id
      LEFT JOIN categories c ON c.id = t.category_id
      WHERE t.amount_minor < 0 AND t.is_transfer = 0 AND t.excluded = 0
-     GROUP BY t.merchant_id HAVING COUNT(*) >= 3 ORDER BY month_count DESC, hit_count DESC`
+     GROUP BY t.merchant_id HAVING COUNT(*) >= 1 ORDER BY month_count DESC, hit_count DESC`
   ).all());
   const decisions = rowsToObjects(db.prepare(
     `SELECT r.*, c.name category_name FROM recurring_items r
@@ -227,7 +258,9 @@ export function recurringExpenses(db) {
   const candidates = detected.map((item) => {
     const decision = decisionMap.get(item.merchantId);
     const variance = item.averageMinor ? Math.round(((item.maximumMinor - item.minimumMinor) / item.averageMinor) * 100) : 0;
-    return { ...item, variancePercent: variance, confidence: item.monthCount >= 3 && variance <= 10 ? "high" : "low", decision: decision?.state ?? "review" };
+    const confidence = item.monthCount >= 3 && variance <= 10 ? "high" : item.hitCount >= 2 ? "low" : "provisional";
+    const suggestedCadence = item.monthCount >= 2 && item.hitCount === item.monthCount ? "monthly" : "unknown";
+    return { ...item, variancePercent: variance, confidence, suggestedCadence, decision: decision?.state ?? "review" };
   });
   return {
     candidates: candidates.filter((item) => item.decision === "review"),

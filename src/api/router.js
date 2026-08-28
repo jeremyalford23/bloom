@@ -58,7 +58,7 @@ export async function handleApi(request, response, url, db) {
   if (method === "GET" && pathname === "/api/domain") { sendJson(response, 200, { apiVersion: API_VERSION, ...DOMAIN_DEFINITION }); return true; }
   if (method === "GET" && pathname === "/api/overview") {
     const overview = rowToObject(db.prepare("SELECT COUNT(*) transaction_count, SUM(category_id IS NULL AND is_transfer = 0) review_count, COALESCE(SUM(CASE WHEN is_transfer = 0 AND excluded = 0 THEN amount_minor ELSE 0 END), 0) net_minor FROM transactions").get());
-    sendJson(response, 200, { ...overview, accountCount: Number(db.prepare("SELECT COUNT(*) count FROM accounts").get().count), ruleCount: Number(db.prepare("SELECT COUNT(*) count FROM classification_rules").get().count) }); return true;
+    sendJson(response, 200, { ...overview, apiVersion: API_VERSION, accountCount: Number(db.prepare("SELECT COUNT(*) count FROM accounts").get().count), ruleCount: Number(db.prepare("SELECT COUNT(*) count FROM classification_rules").get().count) }); return true;
   }
   if (method === "GET" && pathname === "/api/accounts") { sendJson(response, 200, listAccounts(db)); return true; }
   if (method === "POST" && pathname === "/api/accounts") { sendJson(response, 201, createAccount(db, await readJson(request))); return true; }

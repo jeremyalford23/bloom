@@ -46,7 +46,8 @@ test("budget overview separates spending and income and rolls up categories", ()
   assert.equal(restaurants.deltaMinor, -1000);
   const paycheck = overview.groups.flatMap((group) => group.categories).find((item) => item.id === "paycheck");
   assert.equal(paycheck.actualMinor, 250000);
-  assert.equal(paycheck.average12Minor, Math.round(250000 / 12));
+  assert.equal(paycheck.averageMinor, 250000);
+  assert.equal(paycheck.observedMonthCount, 1);
 });
 
 test("income category detail projects and reports positive income activity", () => {
@@ -102,6 +103,15 @@ test("recurring detection can be confirmed or dismissed", () => {
   const decided = decideRecurring(db, { merchantId: candidate.merchantId, merchantName: candidate.merchantName, categoryId: "restaurants", amountMinor: candidate.averageMinor, cadence: "monthly", state: "confirmed" });
   assert.equal(decided.confirmed.length, 1);
   assert.equal(decided.confirmed[0].merchantName.toLowerCase(), "wendys");
+});
+
+test("a single merchant charge is surfaced as a provisional recurring candidate", () => {
+  const { db } = fixture();
+  const candidate = recurringExpenses(db).candidates.find((item) => item.merchantName.toLowerCase() === "festival foods");
+  assert.ok(candidate);
+  assert.equal(candidate.hitCount, 1);
+  assert.equal(candidate.confidence, "provisional");
+  assert.equal(candidate.suggestedCadence, "unknown");
 });
 
 test("irregular targets and budget settings persist", () => {
