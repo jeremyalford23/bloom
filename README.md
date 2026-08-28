@@ -43,4 +43,9 @@ review, irregular-expense targets, and budget configuration. Open **Budget**
 to inspect actual versus budget. Selecting a category opens its detail page,
 where effective-dated budget records can be added or deleted independently.
 
+Bloom is useful after the first imported month: unavailable months are excluded
+from averages, sparse activity is annualized with explicit confidence, budgets
+act as priors, and irregular expenses request an annual estimate instead of
+silently assuming years of zero activity.
+
 The current architecture and financial conventions are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/financial-conventions.md`](docs/financial-conventions.md).

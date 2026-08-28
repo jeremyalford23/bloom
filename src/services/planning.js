@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { audit, rowToObject, rowsToObjects } from "../db.js";
 
-const FORMULA_VERSION = "planning-v4";
+const FORMULA_VERSION = "planning-v5";
 const allowedAssumptions = new Set([
   "asOfDate", "emergencyCoverageMonths", "emergencyReserveFloorMinor", "emergencyReserveBalanceMinor", "effectiveTaxRateBps",
   "essentialAverageMonths", "generalAverageMonths", "irregularHistoryMonths",
@@ -18,6 +18,37 @@ const addMonths = (date, offset) => {
 const money = (value) => Math.round(Number(value) || 0);
 const monthOf = (date) => date.slice(0, 7);
 const trailingMonths = (asOf, count) => Array.from({ length: count }, (_, index) => monthOf(addMonths(asOf, index - count + 1)));
+const monthIsComplete = (month, asOf) => {
+  if (month < monthOf(asOf)) return true;
+  if (month > monthOf(asOf)) return false;
+  const end = new Date(`${month}-01T00:00:00Z`);
+  end.setUTCMonth(end.getUTCMonth() + 1);
+  end.setUTCDate(0);
+  return Number(asOf.slice(8, 10)) >= end.getUTCDate();
+};
+const projectPartialMonth = (amountMinor, asOf, budgetMinor = 0) => {
+  const actual = money(amountMinor);
+  const day = Math.max(1, Number(asOf.slice(8, 10)));
+  const nextMonth = new Date(`${monthOf(asOf)}-01T00:00:00Z`);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+  nextMonth.setUTCDate(0);
+  const pace = Math.round(actual * nextMonth.getUTCDate() / day);
+  return Math.max(actual, money(budgetMinor), Math.min(actual * 2, pace));
+};
+const monthlyEstimate = ({ completeAmounts, partialAmount = null, budgetAmounts, asOf }) => {
+  const budgetMean = budgetAmounts.length ? Math.round(budgetAmounts.reduce((sum, value) => sum + value, 0) / budgetAmounts.length) : 0;
+  const completedMean = completeAmounts.length ? Math.round(completeAmounts.reduce((sum, value) => sum + value, 0) / completeAmounts.length) : 0;
+  const projectedPartial = partialAmount == null ? null : projectPartialMonth(partialAmount, asOf, budgetMean);
+  if (completeAmounts.length && budgetAmounts.length) {
+    const evidenceWeight = completeAmounts.length / (completeAmounts.length + 2);
+    const amountMinor = Math.round(completedMean * evidenceWeight + budgetMean * (1 - evidenceWeight));
+    return { amountMinor, confidence: completeAmounts.length >= 3 ? "blended" : "provisional", source: `${completeAmounts.length} observed month${completeAmounts.length === 1 ? "" : "s"} blended with budget` };
+  }
+  if (completeAmounts.length) return { amountMinor: completedMean, confidence: completeAmounts.length >= 3 ? "actual" : "provisional", source: `${completeAmounts.length}-month observed average, annualized` };
+  if (projectedPartial != null) return { amountMinor: projectedPartial, confidence: "provisional", source: "partial month projected with a 2× pace cap" };
+  if (budgetAmounts.length) return { amountMinor: budgetMean, confidence: "budget", source: `${budgetAmounts.length} budget month${budgetAmounts.length === 1 ? "" : "s"}` };
+  return { amountMinor: 0, confidence: "insufficient", source: "no observed months or budget" };
+};
 const budgetAt = (db, categoryId, month) => db.prepare(
   `SELECT amount_minor FROM budgets WHERE category_id = ? AND effective_from <= ?
    AND (effective_to IS NULL OR effective_to >= ?)
@@ -102,7 +133,7 @@ export function calculatePlan(db) {
       WHERE c.active = 1 AND c.planning_group_id = ? GROUP BY c.id ORDER BY c.name
     `).all(addMonths(from, -1), asOf, groupId));
     const categories = rows.map((row) => {
-      if (groupId === "irregular-expenses" && row.annualExpectedMinor != null) {
+      if (groupId === "irregular-expenses" && money(row.annualExpectedMinor) > 0) {
         return { ...row, annualMinor: row.annualExpectedMinor, months, actualMonths: 0, budgetMonths: 0, missingMonths: 0, confidence: "explicit", source: "manual annual target" };
       }
       const actualRows = rowsToObjects(db.prepare(`
@@ -120,28 +151,39 @@ export function calculatePlan(db) {
         GROUP BY substr(posted_date, 1, 7)
       `).all(row.categoryId, from, asOf)).filter((item) => item.transactionCount > 0);
       const actualByMonth = new Map(actualRows.map((item) => [item.month, money(item.amountMinor)]));
-      let normalizedMinor = 0, actualMonths = 0, budgetMonths = 0, missingMonths = 0;
+      let actualMonths = 0, budgetMonths = 0, missingMonths = 0;
+      const completeAmounts = [], budgetAmounts = [];
+      let partialAmount = null;
       for (const month of monthList) {
         if (actualByMonth.has(month)) {
-          normalizedMinor += actualByMonth.get(month);
           actualMonths += 1;
+          if (monthIsComplete(month, asOf)) completeAmounts.push(actualByMonth.get(month));
+          else partialAmount = actualByMonth.get(month);
         } else {
           const budget = budgetAt(db, row.categoryId, month);
           if (budget) {
-            normalizedMinor += money(budget.amount_minor);
+            budgetAmounts.push(money(budget.amount_minor));
             budgetMonths += 1;
           } else {
             missingMonths += 1;
           }
         }
       }
-      const annualMinor = Math.round(normalizedMinor / months * 12);
-      const confidence = missingMonths ? "insufficient" : actualMonths === months ? "actual" : actualMonths ? "blended" : "budget";
-      const source = confidence === "actual" ? `${months} actual months`
-        : confidence === "budget" ? `${budgetMonths} budget months`
-          : confidence === "blended" ? `${actualMonths} actual + ${budgetMonths} budget months`
-            : `${actualMonths} actual + ${budgetMonths} budget; ${missingMonths} months missing`;
-      return { ...row, annualMinor, months, actualMonths, budgetMonths, missingMonths, confidence, source };
+      const currentBudget = budgetAt(db, row.categoryId, monthOf(asOf));
+      if (currentBudget && !budgetAmounts.length) budgetAmounts.push(money(currentBudget.amount_minor));
+      if (groupId === "irregular-expenses") {
+        const observedYears = new Set(actualRows.map((item) => item.month.slice(0, 4))).size;
+        const observedAnnualFloor = observedYears ? Math.round(actualRows.reduce((sum, item) => sum + money(item.amountMinor), 0) / observedYears) : 0;
+        const budgetAnnual = budgetAmounts.length ? Math.round(budgetAmounts.reduce((sum, value) => sum + value, 0) / budgetAmounts.length * 12) : 0;
+        const annualMinor = Math.max(observedAnnualFloor, budgetAnnual);
+        const confidence = observedYears >= 2 ? "actual" : annualMinor ? "provisional" : "insufficient";
+        const source = observedAnnualFloor
+          ? `${observedYears}-year observed average used as annual floor${money(row.annualExpectedMinor) <= 0 ? "; frequency unconfirmed" : ""}`
+          : budgetAnnual ? `${budgetMonths} budget months annualized` : "annual expectation required";
+        return { ...row, annualMinor, months, actualMonths, budgetMonths, missingMonths, confidence, source };
+      }
+      const estimate = monthlyEstimate({ completeAmounts, partialAmount, budgetAmounts, asOf });
+      return { ...row, annualMinor: estimate.amountMinor * 12, estimatedMonthlyMinor: estimate.amountMinor, months, actualMonths, completeActualMonths: completeAmounts.length, budgetMonths, missingMonths, confidence: estimate.confidence, source: `${estimate.source}${missingMonths ? `; ${missingMonths} unavailable` : ""}` };
     });
     return { id: groupId, annualMinor: categories.reduce((sum, item) => sum + item.annualMinor, 0), transactionCount: categories.reduce((sum, item) => sum + item.transactionCount, 0), categories };
   });
@@ -154,23 +196,33 @@ export function calculatePlan(db) {
   const gross = (net) => Math.round(net / Math.max(0.01, 1 - assumptions.effectiveTaxRateBps / 10000));
   const incomeMonths = trailingMonths(asOf, 12);
   const incomeCategories = rowsToObjects(db.prepare(`SELECT c.id FROM categories c JOIN planning_groups p ON p.id = c.planning_group_id WHERE c.active = 1 AND p.kind = 'income'`).all());
-  let projectedIncome = 0, incomeTransactionCount = 0, incomeActualMonths = 0, incomeBudgetMonths = 0, incomeMissingMonths = 0;
+  let projectedIncome = 0, observedIncome = 0, incomeTransactionCount = 0, incomeActualMonths = 0, incomeCompleteMonths = 0, incomeBudgetMonths = 0, incomeMissingMonths = 0;
+  const incomeSources = [];
   for (const category of incomeCategories) {
+    const completeAmounts = [], budgetAmounts = [];
+    let partialAmount = null;
     for (const month of incomeMonths) {
       const actual = db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) amount_minor, COUNT(*) transaction_count FROM transactions
         WHERE category_id = ? AND is_transfer = 0 AND excluded = 0 AND amount_minor > 0 AND substr(posted_date, 1, 7) = ? AND posted_date <= ?`).get(category.id, month, asOf);
       if (actual.transaction_count) {
-        projectedIncome += money(actual.amount_minor);
+        observedIncome += money(actual.amount_minor);
         incomeTransactionCount += actual.transaction_count;
         incomeActualMonths += 1;
+        if (monthIsComplete(month, asOf)) { completeAmounts.push(money(actual.amount_minor)); incomeCompleteMonths += 1; }
+        else partialAmount = money(actual.amount_minor);
       } else {
         const budget = budgetAt(db, category.id, month);
-        if (budget) { projectedIncome += money(budget.amount_minor); incomeBudgetMonths += 1; }
+        if (budget) { budgetAmounts.push(money(budget.amount_minor)); incomeBudgetMonths += 1; }
         else incomeMissingMonths += 1;
       }
     }
+    const currentBudget = budgetAt(db, category.id, monthOf(asOf));
+    if (currentBudget && !budgetAmounts.length) budgetAmounts.push(money(currentBudget.amount_minor));
+    const estimate = monthlyEstimate({ completeAmounts, partialAmount, budgetAmounts, asOf });
+    projectedIncome += estimate.amountMinor * 12;
+    incomeSources.push(estimate.source);
   }
-  const income = { amountMinor: projectedIncome, transactionCount: incomeTransactionCount, actualMonths: incomeActualMonths, budgetMonths: incomeBudgetMonths, missingMonths: incomeMissingMonths };
+  const income = { amountMinor: projectedIncome, observedMinor: observedIncome, transactionCount: incomeTransactionCount, actualMonths: incomeActualMonths, completeMonths: incomeCompleteMonths, budgetMonths: incomeBudgetMonths, missingMonths: incomeMissingMonths, sources: incomeSources };
   const operatingFrom = addMonths(asOf, -12);
   const operatingDays = rowsToObjects(db.prepare(`
     WITH activity AS (
@@ -257,7 +309,7 @@ export function calculatePlan(db) {
   return {
     formulaVersion: FORMULA_VERSION, asOfDate: asOf, assumptions, requirementClasses,
     totals: { committedMinor: committed, lifestyleMinor: lifestyle, irregularMinor: irregular, householdMinor: household },
-    income: { annualNetMinor: income.amountMinor, observedNetMinor: income.amountMinor, transactionCount: income.transactionCount, actualMonths: income.actualMonths, budgetMonths: income.budgetMonths, missingMonths: income.missingMonths, source: `${income.actualMonths} actual + ${income.budgetMonths} budget category-months${income.missingMonths ? `; ${income.missingMonths} missing` : ""}`, pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
+    income: { annualNetMinor: income.amountMinor, projectedAnnualNetMinor: income.amountMinor, observedNetMinor: income.observedMinor, transactionCount: income.transactionCount, actualMonths: income.actualMonths, completeMonths: income.completeMonths, budgetMonths: income.budgetMonths, missingMonths: income.missingMonths, confidence: income.completeMonths >= 3 || income.budgetMonths ? "supported" : income.actualMonths ? "provisional" : "insufficient", source: income.sources.join("; ") || "no income evidence", pretaxRetirementMinor: assumptions.pretaxRetirementMinor },
     cash: { operatingTargetMinor: operatingTarget, observedPeakMinor: observedOperatingPeak, plannedMonthlyOrdinaryMinor: plannedMonthlyOrdinary, budgetOperatingFloorMinor: budgetOperatingFloor, operatingHeldMinor: operatingHeld, calculatedEmergencyTargetMinor: calculatedEmergencyTarget, emergencyTargetMinor: emergencyTarget, emergencyHeldMinor: emergencyHeld, importedEmergencyHeldMinor: importedEmergencyHeld, manualEmergencyHeldMinor: manualEmergencyHeld, obligationTargetMinor: obligationTarget, obligationHeldMinor: obligationHeld, liquidRequirementMinor: liquidRequirement, cashHeldMinor: cashHeld },
     obligations, sinkingFunds, accounts,
     capital: { savingsRequirementMinor: savingsRequirement, savingsCapacityMinor: savingsCapacity, totalHoldingsMinor: totalHoldings, sinkingTargetMinor: sinkingTarget, sinkingHeldMinor: sinkingHeld, growthCapitalMinor: growthCapital },

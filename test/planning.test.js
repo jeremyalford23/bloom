@@ -12,7 +12,7 @@ function transaction(db, { id, categoryId, date, amountMinor }) {
     .run(id, date, amountMinor, id, categoryId, id, now, now);
 }
 
-test("planning v4 is deterministic and traces results to source inputs", () => {
+test("planning v5 is deterministic and traces results to source inputs", () => {
   const db = openDatabase(":memory:");
   createAccount(db, { id:"ignored", name:"Checking", type:"checking", role:"Operating cash", balanceMinor:300000, balanceAsOf:"2026-08-31" });
   const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
@@ -22,8 +22,11 @@ test("planning v4 is deterministic and traces results to source inputs", () => {
   transaction(db, { id:"grocery-1", categoryId:"groceries", date:"2026-08-02", amountMinor:-60000 });
   transaction(db, { id:"income-1", categoryId:"paycheck", date:"2026-08-03", amountMinor:300000 });
   const first = calculatePlan(db), second = calculatePlan(db);
-  assert.equal(first.totals.committedMinor, 220000);
-  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v4");
+  assert.equal(first.totals.committedMinor, 1920000);
+  assert.equal(first.income.annualNetMinor, 3600000);
+  assert.equal(first.income.observedNetMinor, 300000);
+  assert.equal(first.income.confidence, "provisional");
+  assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v5");
   assert.ok(first.results.householdRequirement.inputReferences.some((ref) => ref.id === "mortgage"));
   assert.deepEqual(first, second);
 });
@@ -59,11 +62,11 @@ test("sparse history is blended with budgets instead of treating missing months 
   const mortgage = calculatePlan(db).requirementClasses
     .find((group) => group.id === "fixed-contractual").categories
     .find((category) => category.categoryId === "mortgage");
-  assert.equal(mortgage.annualMinor, 1090000);
+  assert.equal(mortgage.annualMinor, 1119996);
   assert.equal(mortgage.actualMonths, 1);
   assert.equal(mortgage.budgetMonths, 11);
   assert.equal(mortgage.missingMonths, 0);
-  assert.equal(mortgage.confidence, "blended");
+  assert.equal(mortgage.confidence, "provisional");
 });
 
 test("operating cash uses the buffered monthly budget when history is sparse", () => {
@@ -93,14 +96,30 @@ test("emergency reserve uses a manual floor until the spending-based target is h
   transaction(db, { id:"mortgage-floor", categoryId:"mortgage", date:"2026-08-01", amountMinor:-100000 });
 
   const floored = calculatePlan(db);
-  assert.equal(floored.cash.calculatedEmergencyTargetMinor, 50000);
+  assert.equal(floored.cash.calculatedEmergencyTargetMinor, 600000);
   assert.equal(floored.cash.emergencyTargetMinor, 2500000);
   assert.equal(floored.results.emergencyReserveTarget.formulaName, "greater-of-committed-monthly-times-coverage-or-manual-floor");
   assert.ok(floored.results.emergencyReserveTarget.inputReferences.some((ref) => ref.id === "emergencyReserveFloorMinor"));
 
   updatePlanningAssumptions(db, { emergencyReserveFloorMinor:25000 });
   const calculated = calculatePlan(db);
-  assert.equal(calculated.cash.emergencyTargetMinor, 50000);
+  assert.equal(calculated.cash.emergencyTargetMinor, 600000);
+});
+
+test("one irregular occurrence becomes a provisional annual floor", () => {
+  const db = openDatabase(":memory:");
+  createAccount(db, { name:"Checking", type:"checking", role:"Operating cash", balanceMinor:0, balanceAsOf:"2026-08-31" });
+  const account = db.prepare("SELECT id FROM accounts WHERE name = 'Checking'").get();
+  db.prepare("UPDATE accounts SET id = 'checking' WHERE id = ?").run(account.id);
+  updatePlanningAssumptions(db, { asOfDate:"2026-08-31", irregularHistoryMonths:48 });
+  transaction(db, { id:"tax-1", categoryId:"property-taxes", date:"2026-08-15", amountMinor:-120000 });
+
+  const propertyTax = calculatePlan(db).requirementClasses
+    .find((group) => group.id === "irregular-expenses").categories
+    .find((category) => category.categoryId === "property-taxes");
+  assert.equal(propertyTax.annualMinor, 120000);
+  assert.equal(propertyTax.confidence, "provisional");
+  assert.match(propertyTax.source, /frequency unconfirmed/);
 });
 
 test("manual emergency reserve balance counts as held cash and total holdings", () => {
