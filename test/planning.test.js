@@ -25,6 +25,8 @@ test("planning v5 is deterministic and traces results to source inputs", () => {
   assert.equal(first.totals.committedMinor, 1920000);
   assert.equal(first.income.annualNetMinor, 3600000);
   assert.equal(first.income.observedNetMinor, 300000);
+  assert.equal(first.capital.realizedSavingsMinor, 140000);
+  assert.deepEqual(first.capital.monthlySavings.at(-1), { month:"2026-08", amountMinor:140000 });
   assert.equal(first.income.confidence, "provisional");
   assert.equal(first.results.minimumGrossIncome.formulaVersion, "planning-v5");
   assert.ok(first.results.householdRequirement.inputReferences.some((ref) => ref.id === "mortgage"));
