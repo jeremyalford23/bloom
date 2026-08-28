@@ -103,6 +103,16 @@ test("emergency reserve uses a manual floor until the spending-based target is h
   assert.equal(calculated.cash.emergencyTargetMinor, 50000);
 });
 
+test("manual emergency reserve balance counts as held cash and total holdings", () => {
+  const db = openDatabase(":memory:");
+  updatePlanningAssumptions(db, { emergencyReserveBalanceMinor: 1250000 });
+  const plan = calculatePlan(db);
+  assert.equal(plan.cash.manualEmergencyHeldMinor, 1250000);
+  assert.equal(plan.cash.emergencyHeldMinor, 1250000);
+  assert.equal(plan.cash.cashHeldMinor, 1250000);
+  assert.equal(plan.capital.totalHoldingsMinor, 1250000);
+});
+
 test("annual savings requirement is calculated from cash gaps and paced sinking shortfalls", () => {
   const db = openDatabase(":memory:");
   updatePlanningAssumptions(db, { asOfDate:"2026-08-31", emergencyCoverageMonths:0, obligationHorizonMonths:6 });

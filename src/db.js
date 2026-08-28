@@ -255,6 +255,7 @@ function migrateSchema(db) {
   assumption.run("asOfDate", JSON.stringify(today), "date", "Anchors every trailing window and obligation horizon.", now);
   assumption.run("emergencyCoverageMonths", JSON.stringify(6), "months", "Months of committed spending held for an income shock.", now);
   assumption.run("emergencyReserveFloorMinor", JSON.stringify(0), "minor-currency", "Minimum emergency reserve used while spending history or budgets are incomplete; the calculated target overrides it when higher.", now);
+  assumption.run("emergencyReserveBalanceMinor", JSON.stringify(0), "minor-currency", "Current balance held in a separate emergency reserve account that is not imported.", now);
   assumption.run("effectiveTaxRateBps", JSON.stringify(2200), "basis-points", "Effective rate used only to express net requirements in gross terms.", now);
   assumption.run("essentialAverageMonths", JSON.stringify(6), "months", "Trailing window for essential variable categories.", now);
   assumption.run("generalAverageMonths", JSON.stringify(12), "months", "Trailing window for fixed and lifestyle categories.", now);
