@@ -297,6 +297,7 @@ const planLinks = [
 const planNav = (data) => '<div class="plan-nav">'+planLinks.map(([id,label])=>'<a href="#'+id+'" class="'+(state.route===id?'active':'')+'">'+label+'</a>').join('')+'<span>as of '+date(data.asOfDate)+' · '+esc(data.formulaVersion)+'</span><a class="plan-assumptions '+(state.route==='plan-assumptions'?'active':'')+'" href="#plan-assumptions">Assumptions</a></div>';
 const planShell = (data, content, meta="") => shell(planNav(data)+content, meta || "Plan / " + (state.route==="plan-assumptions" ? "Assumptions" : planLinks.find(([id])=>id===state.route)?.[1] || "Overview"));
 const meter = (held,target) => '<div class="plan-meter"><span style="width:'+Math.min(100,target ? held/target*100 : 0)+'%"></span></div>';
+const requirementBar = (data) => '<span class="requirement-bar" aria-label="Household requirement composition"><i class="fixed" style="width:'+(data.totals.householdMinor ? data.totals.committedMinor/data.totals.householdMinor*100 : 0)+'%"></i><i class="lifestyle" style="width:'+(data.totals.householdMinor ? data.totals.lifestyleMinor/data.totals.householdMinor*100 : 0)+'%"></i><i class="irregular" style="width:'+(data.totals.householdMinor ? data.totals.irregularMinor/data.totals.householdMinor*100 : 0)+'%"></i></span>';
 const traceButton = (result) => '<button class="button link trace" data-result="'+esc(result.resultType)+'">trace</button>';
 function bindTraces(data) { document.querySelectorAll('.trace').forEach((button)=>button.onclick=()=>openTrace(data.results[button.dataset.result])); }
 function openTrace(value) {
@@ -316,7 +317,7 @@ async function plan(){
     ["Sinking funds",data.capital.sinkingHeldMinor,data.capital.sinkingTargetMinor,"plan-sinking"]
   ];
   const summaryCards=[
-    ['01 · HOUSEHOLD REQUIREMENT',data.totals.householdMinor,'fixed '+plainCash(data.totals.committedMinor)+' · lifestyle '+plainCash(data.totals.lifestyleMinor)+' · irregular '+plainCash(data.totals.irregularMinor),'plan-household',''],
+    ['01 · HOUSEHOLD REQUIREMENT',data.totals.householdMinor,requirementBar(data)+'fixed '+plainCash(data.totals.committedMinor)+' · lifestyle '+plainCash(data.totals.lifestyleMinor)+' · irregular '+plainCash(data.totals.irregularMinor),'plan-household',''],
     ['02 · REQUIRED INCOME',data.results.comfortableGrossIncome.amountMinor,'minimum '+plainCash(data.results.minimumGrossIncome.amountMinor)+' · actual '+plainCash(actualGross),'plan-income',''],
     ['03 · CASH & RESERVES',data.cash.cashHeldMinor,'of '+plainCash(data.cash.liquidRequirementMinor)+' required','plan-cash','meter'],
     ['04 · SINKING FUNDS',data.capital.sinkingHeldMinor,'of '+plainCash(data.capital.sinkingTargetMinor)+' required · '+plainCash(sinkingGap)+' short','plan-sinking','meter'],
