@@ -18,7 +18,10 @@ function nav(meta = "") {
   const links = [["home","Home"],["transactions","Transactions"],["budget","Budget"],["plan","Plan"],["accounts","Accounts"],["rules","Rules"]];
   return '<nav class="nav"><span class="wordmark">Household</span>' + links.map(([id,label]) => '<a href="#' + id + '" class="' + ((state.route === id || (id === "budget" && ["category","recurring","irregular","budget-settings","categories"].some((prefix) => state.route.startsWith(prefix)))) ? "active" : "") + '">' + label + '</a>').join("") + '<span class="nav-meta">' + esc(meta) + '</span><button class="button primary nav-import" data-action="import">Import CSV</button></nav>';
 }
-const shell = (content, meta = "") => '<div class="shell"><div class="frame">' + nav(meta) + content + '</div></div>';
+const shell = (content, meta = "") => {
+  const inBudget = state.route === "budget" || ["recurring","irregular","budget-settings"].includes(state.route) || state.route.startsWith("category/");
+  return '<div class="shell"><div class="frame">' + nav(meta) + (inBudget ? budgetNav() : '') + content + '</div></div>';
+};
 const scrollShell = (content, meta = "") => '<div class="shell home-shell"><div class="frame home-frame">' + nav(meta) + content + '</div></div>';
 const accountOptions = (selected = "") => '<option value="">Choose account…</option>' + state.accounts.map((a) => '<option value="' + a.id + '" ' + (selected === a.id ? "selected" : "") + '>' + esc(a.name) + (a.lastFour ? " ···" + esc(a.lastFour) : "") + '</option>').join("");
 const categoryOptions = (selected = "") => '<option value="">Uncategorized</option>' + state.categories.filter((c) => c.active).map((c) => '<option value="' + c.id + '" ' + (selected === c.id ? "selected" : "") + '>' + esc(c.name) + '</option>').join("");
@@ -165,6 +168,8 @@ function openAccount() {
 }
 
 const monthLabel = (month) => new Date(month + "-01T00:00:00").toLocaleDateString("en-US", { month:"long", year:"numeric" });
+const budgetLinks = [["budget","Budget"],["recurring","Recurring"],["irregular","Irregular"],["budget-settings","Configure"]];
+const budgetNav = (actions = "") => '<div class="plan-nav budget-tabs">' + budgetLinks.map(([id,label]) => '<a href="#' + id + '" class="' + ((state.route === id || (id === "budget" && state.route.startsWith("category/"))) ? "active" : "") + '">' + label + '</a>').join("") + (actions ? '<div class="budget-actions">' + actions + '</div>' : '') + '</div>';
 async function budget() {
   state.budgetMonth ||= new Date().toISOString().slice(0,7);
   const data = await request("/api/budget?month=" + state.budgetMonth);
